@@ -14,10 +14,16 @@ These are the main rules of this codebase:
 2. Standardization, centralization, and modularity are mandatory.
 3. Structure everything as if it will be open-sourced under OpenAI-level public scrutiny.
 4. One coherent part must be completed and verified before moving to the next.
+5. All operations must be efficient and scalable for very large WhatsApp histories.
+6. User experience must be seamless, frictionless, and plain-English first.
 
 Drift-prone logic means any setup where the same decision, rule, transformation, validation, prompt, schema, config value, integration behavior, or business rule can evolve differently in more than one place. That is forbidden. When behavior is shared, it must have one source of truth and all callers must depend on that source.
 
 The target is not merely working code. The target is the kind of structure expected from the best open-source projects: discoverable modules, clear boundaries, consistent naming, strong tests for meaningful behavior, useful docs, and no hidden parallel systems.
+
+Scalable means no user-facing path should assume a small backup, small chat, small media set, or small export. Large WhatsApp histories must be handled with bounded queries, pagination or windowing, lazy media loading, predictable memory use, responsive UI states, and tests that cover large-data behavior. Avoid unbounded reads, unbounded serialization payloads, unbounded React rendering, and synchronous work that can blank or freeze the app.
+
+Seamless means the best path should feel automatic when the platform allows it, and any fallback should explain the next action in product language instead of exposing implementation details. Users should not need to understand backup IDs, hashed iPhone backup paths, SQLite tables, permissions internals, or terminal workflows to make progress.
 
 ## Operating Mode
 

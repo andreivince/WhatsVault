@@ -40,6 +40,17 @@ pub fn attachment_media_type(kind: AttachmentKind, filename: &str) -> Option<&'s
     }
 }
 
+pub fn attachment_display_label(kind: AttachmentKind) -> &'static str {
+    match kind {
+        AttachmentKind::Audio => "Voice message",
+        AttachmentKind::Gif => "GIF",
+        AttachmentKind::Photo => "Photo",
+        AttachmentKind::Sticker => "Sticker",
+        AttachmentKind::Video => "Video",
+        AttachmentKind::Unknown => "Attachment",
+    }
+}
+
 fn image_media_type(filename: &str) -> Option<&'static str> {
     match extension(filename).as_str() {
         "gif" => Some("image/gif"),

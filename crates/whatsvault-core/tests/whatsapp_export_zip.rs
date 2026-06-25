@@ -3,7 +3,8 @@ use std::{env, fs::File};
 
 use whatsvault_core::sources::whatsapp_export_zip::{
     classify_whatsapp_export_attachment, import_whatsapp_export_zip,
-    read_whatsapp_export_attachment,
+    read_whatsapp_export_attachment, read_whatsapp_export_attachments,
+    DEFAULT_WHATSAPP_EXPORT_IMPORT_MAX_MESSAGES,
 };
 use whatsvault_core::{AttachmentKind, ImportIssueCode, SourceKind};
 use zip::write::SimpleFileOptions;
@@ -88,6 +89,35 @@ fn reports_continuation_without_message_as_structured_issue() {
 }
 
 #[test]
+fn imports_large_export_zip_as_bounded_recent_window() {
+    let message_count = DEFAULT_WHATSAPP_EXPORT_IMPORT_MAX_MESSAGES + 3;
+    let mut transcript = String::new();
+    for index in 1..=message_count {
+        transcript.push_str(&format!(
+            "[01/02/2026, 09:15:{:02}] Ana: message {index}\n",
+            index % 60
+        ));
+    }
+    let archive = synthetic_zip(&[("_chat.txt", transcript.as_bytes())]);
+
+    let imported = import_whatsapp_export_zip(archive).unwrap();
+
+    assert_eq!(
+        imported.messages.len(),
+        DEFAULT_WHATSAPP_EXPORT_IMPORT_MAX_MESSAGES
+    );
+    assert_eq!(imported.messages[0].body, "message 4");
+    assert_eq!(
+        imported.messages.last().unwrap().body,
+        format!("message {message_count}")
+    );
+    assert_eq!(
+        imported.issues.last().unwrap().code,
+        ImportIssueCode::MessageWindowTruncated
+    );
+}
+
+#[test]
 fn fails_when_archive_has_no_transcript() {
     let archive = synthetic_zip(&[("00000001-PHOTO-2026-01-02-09-16-00.jpg", b"fake")]);
 
@@ -162,6 +192,47 @@ fn skips_attachment_payloads_over_size_limit() {
 }
 
 #[test]
+fn reads_multiple_attachment_payloads_by_normalized_archive_path() {
+    let archive = synthetic_zip(&[
+        ("_chat.txt", b"[01/02/2026, 09:15:00] Ana: media\n"),
+        (
+            "Media\\00000001-PHOTO-2026-01-02-09-16-00.jpg",
+            b"fake image bytes",
+        ),
+        (
+            "Media/00000002-AUDIO-2026-01-02-09-17-00.opus",
+            b"fake audio bytes",
+        ),
+        (
+            "Media/00000003-VIDEO-2026-01-02-09-18-00.mp4",
+            b"this payload is too large for this test cap",
+        ),
+    ]);
+
+    let payloads = read_whatsapp_export_attachments(
+        archive,
+        [
+            "Media/00000001-PHOTO-2026-01-02-09-16-00.jpg",
+            "Media\\00000002-AUDIO-2026-01-02-09-17-00.opus",
+            "Media/00000003-VIDEO-2026-01-02-09-18-00.mp4",
+        ],
+        16,
+    )
+    .unwrap();
+
+    assert_eq!(payloads.len(), 2);
+    assert_eq!(
+        payloads["Media/00000001-PHOTO-2026-01-02-09-16-00.jpg"].kind,
+        AttachmentKind::Photo
+    );
+    assert_eq!(
+        payloads["Media/00000002-AUDIO-2026-01-02-09-17-00.opus"].bytes,
+        b"fake audio bytes"
+    );
+    assert!(!payloads.contains_key("Media/00000003-VIDEO-2026-01-02-09-18-00.mp4"));
+}
+
+#[test]
 #[ignore = "requires WHATSVAULT_PRIVATE_EXPORT_ZIP to point at a private local WhatsApp export"]
 fn imports_private_export_zip_without_printing_chat_content() {
     let path = env::var("WHATSVAULT_PRIVATE_EXPORT_ZIP")
@@ -171,7 +242,7 @@ fn imports_private_export_zip_without_printing_chat_content() {
     let imported = import_whatsapp_export_zip(file).unwrap();
 
     assert_eq!(imported.source_kind, SourceKind::WhatsappExportZip);
-    assert!(imported.messages.len() > 1_000);
-    assert!(imported.attachments.len() > 1_000);
+    assert!(!imported.messages.is_empty());
+    assert!(imported.messages.len() <= DEFAULT_WHATSAPP_EXPORT_IMPORT_MAX_MESSAGES);
     assert!(imported.transcript_name.is_some());
 }

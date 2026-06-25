@@ -22,7 +22,8 @@
         "center": true,
         "visible": true,
         "focus": true,
-        "resizable": true
+        "resizable": true,
+        "decorations": false
       }
     ],
     "security": {

@@ -71,15 +71,28 @@ Covered by tests:
 - synthetic `ChatStorage.sqlite` files can list chats sorted by latest message and import one selected chat as normalized messages and attachments
 - `cargo run -p whatsvault-proof` provides a private-safe report for real backup checks, including aggregate WhatsApp database counts when readable
 
+## Real Backup Proof
+
+On June 25, 2026, the private-safe proof command passed against a real local iPhone backup without manual SQLite copying.
+
+Sanitized result:
+
+- local backup root checked
+- one backup candidate found
+- `Info.plist` and `Status.plist` present
+- WhatsApp `ChatStorage.sqlite` found through `Manifest.db`
+- resolved physical `ChatStorage.sqlite` backup file exists
+- WhatsApp `ContactsV2.sqlite` manifest entry present
+- WhatsApp media manifest entries are present
+- aggregate message, chat, and media-item counts are nonzero
+- real chat list can be read
+- a real chat can be imported into the normalized app model
+- chat import proof exposes aggregate message/media counts only
+
+The proof output intentionally does not record device identifiers, backup paths, file IDs, contact names, chat titles, message bodies, media filenames, or raw SQLite rows.
+
 ## Current Gate
 
-No real MobileSync backup is currently available in the local development environment, so the `Manifest.db` proof cannot be verified against a real iPhone backup yet.
+The first real MobileSync backup proof gate is complete: WhatsVault can locate WhatsApp files through `Manifest.db`, resolve `ChatStorage.sqlite` to the physical backup file, read aggregate counts, read the chat list, import a real chat into the normalized app model, render that chat in the packaged desktop UI, preview bounded media from the backup, and export a bounded self-contained HTML file without manual SQLite copying.
 
-Do not mark the iPhone-backup phase complete until a real local backup proves:
-
-1. available backup folders can be listed;
-2. `Manifest.db` can be opened;
-3. WhatsApp files can be located from `domain` and `relativePath`;
-4. the `ChatStorage.sqlite` `fileID` resolves to an existing physical backup file;
-5. `ChatStorage.sqlite` can be read;
-6. message, chat, and media-item counts can be produced without manually copying SQLite files.
+Do not commit the private proof artifacts. Public documentation should mention only sanitized aggregate evidence and the remaining release-hardening work: signed/notarized macOS output, Windows signing, and clean-machine install/open proof.

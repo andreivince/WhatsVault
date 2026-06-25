@@ -36,10 +36,13 @@ cargo test --workspace
 cd apps/desktop
 npm test
 npm run hygiene:public
+npm run release:readiness
 npm run build
 ```
 
 `npm run hygiene:public` scans Git-tracked files plus local non-ignored new files. It is meant to catch private backups, transcripts, databases, media, local paths, and personal roadmap-only material before a pull request.
+
+`npm run release:readiness` confirms the public docs still describe known release blockers honestly. `npm run release:preflight` is the stricter stable-release gate; it is expected to fail while real-backup proof, packaged render smoke, or signing remain incomplete.
 
 Build the desktop app locally:
 

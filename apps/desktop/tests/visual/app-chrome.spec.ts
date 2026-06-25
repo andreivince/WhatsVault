@@ -10,6 +10,7 @@ test("desktop shell does not render platform-specific fake window controls", asy
   await expect(page.locator(".navigation-rail")).toHaveCount(0);
   await expect(page.locator(".composer")).toHaveCount(0);
   await expect(page.locator(".sidebar-header .icon-button")).toHaveCount(0);
+  await expect(page.getByLabel("Open another source")).toHaveCount(0);
   await expect(page.getByLabel("Video call")).toHaveCount(0);
   await expect(page.getByLabel("Call")).toHaveCount(0);
   await expect(page.getByLabel("Add")).toHaveCount(0);

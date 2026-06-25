@@ -195,7 +195,12 @@ export function createDemoLargeBackupImport(messageCount = 900): ChatImport {
     source_kind: "iphone_backup",
     transcript_name: "Large Archive",
     attachments: [],
-    issues: [],
+    issues: [
+      {
+        code: "message_window_truncated",
+        message: `Only the latest ${messageCount.toLocaleString("en-US")} messages were loaded for performance`,
+      },
+    ],
     messages: Array.from({ length: messageCount }, (_, index) => {
       const messageNumber = index + 1;
       const hour = 7 + Math.floor(index / 60);

@@ -2,7 +2,7 @@
 
 WhatsVault is a local-first desktop app for browsing WhatsApp chats and media from iPhone backups. It runs on your computer and does not upload your messages, backups, contacts, or media.
 
-Status: pre-alpha desktop viewer. WhatsApp export ZIP viewing works as the first local source path. The desktop app can scan default iPhone backup folders, show local backup/WhatsApp status, and route a selected ready backup into the shared chat-list/import UI path. Real iPhone-backup browsing still needs proof against a real local backup before it can be marked supported.
+Status: pre-alpha desktop viewer. WhatsApp export ZIP viewing works as the first local source path. The desktop app can scan default iPhone backup folders, show local backup/WhatsApp status, and route a selected ready backup into the shared chat-list/import UI path. Real local iPhone-backup proof has passed for `Manifest.db`, `ChatStorage.sqlite`, desktop chat rendering, bounded media preview, and bounded HTML export without committing private artifacts. Stable release remains blocked by signing/notarization and release hardening.
 
 ![Synthetic WhatsVault desktop demo showing local backup chats, search, image media preview, date filtering, and export controls](docs/assets/whatsvault-synthetic-demo.png)
 
@@ -60,6 +60,10 @@ See [docs/architecture.md](docs/architecture.md).
 
 See [docs/supported-sources.md](docs/supported-sources.md) for the current source matrix.
 
+## Proof Evidence
+
+See [docs/proof-evidence.md](docs/proof-evidence.md) for the public-safe evidence boundary behind local real-backup proof claims.
+
 ## Demo Video
 
 README demo videos must be generated from synthetic English demo data, not private chats or backups.
@@ -77,7 +81,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md), [docs/troubleshooting.md](docs/troublesh
 - WhatsApp export ZIP import is tested with synthetic fixtures.
 - A private ignored test hook validates a local export ZIP without printing chat content.
 - A Tauri desktop app exists at `apps/desktop`.
-- The desktop app can open a WhatsApp export ZIP through a native file picker, parse it in Rust, render the chat timeline, search messages, preview bounded images, stickers, audio, video, and documents from the archive, open image previews, and export the chat to self-contained HTML.
+- The desktop app can open a WhatsApp export ZIP through a native file picker, parse the transcript in Rust into a bounded latest-message window, render the chat timeline, search loaded messages, preview bounded images, stickers, audio, video, and documents from the archive, open image previews, and export the loaded window to self-contained HTML.
 - The desktop app can scan default iPhone backup folders and show safe display metadata plus WhatsApp file-detection status without showing local backup paths in the UI.
 - Default iPhone backup root construction is tested for macOS, Windows Microsoft Store Apple Devices or iTunes, and Windows legacy iTunes locations.
 - iPhone backup discovery and `Manifest.db` mapping are tested with synthetic fixtures.
@@ -85,21 +89,25 @@ See [CONTRIBUTING.md](CONTRIBUTING.md), [docs/troubleshooting.md](docs/troublesh
 - Synthetic `ChatStorage.sqlite` files can be summarized for message, chat, and media-item counts through the shared core crate.
 - Synthetic `ChatStorage.sqlite` files can list chats by latest message and import one selected chat into the same normalized `ChatImport` model used by the desktop timeline.
 - The Tauri command layer can resolve a selected backup's `ChatStorage.sqlite` through `Manifest.db` and call the core chat-list/import API.
-- The React app can select a ready backup, show discovered chats in the sidebar and backup panel, and open one selected backup chat through the same normalized timeline used by export ZIP imports. This path is currently covered with synthetic data; real-backup proof is still pending.
-- Backup media preview can resolve synthetic `ChatStorage.sqlite` media paths through `Manifest.db` to hashed backup files and return bounded browser-readable previews. Real-backup proof is still pending.
-- Backup HTML export can re-import a selected synthetic backup chat by id, embed bounded media resolved through `Manifest.db`, and write through the shared escaped core exporter. Real-backup proof is still pending.
+- The React app can select a ready backup, show discovered chats in the sidebar and backup panel, and open one selected backup chat through the same normalized timeline used by export ZIP imports. This path is covered with synthetic tests and has passed local real-backup chat-rendering smoke without committing private artifacts.
+- When macOS blocks automatic access to the default MobileSync backup folder, the desktop app shows a plain "Choose folder" fallback that accepts either the Backup folder or one specific device backup folder.
+- Backup media preview can resolve `ChatStorage.sqlite` media paths through `Manifest.db` to hashed backup files and return bounded browser-readable previews. This is covered by synthetic tests and real local backup UI smoke.
+- Backup HTML export has a bounded implementation for selected backup chats, including media resolved through `Manifest.db`; it is enabled in the desktop UI after real local backup export smoke.
 - The desktop source screen separates the available WhatsApp export ZIP viewer from iPhone-backup proof work.
-- The desktop search field filters selected-chat messages and backup chat summaries through shared frontend domain helpers.
-- The desktop timeline renders a bounded recent-message window with a tested "show earlier" path for synthetic 900-message chats.
+- The desktop search field filters WhatsApp export ZIP messages through shared frontend domain helpers, searches iPhone-backup chat names through a bounded backend query, and searches selected iPhone-backup chats through a bounded backend query for latest matching messages.
+- The desktop timeline renders a bounded recent-message window with a tested "show earlier" path for already-loaded chats, while source importers avoid returning unbounded message vectors for huge backup or ZIP histories.
 - The public synthetic demo renders a safe inline image preview and image-preview modal without using private media files.
 - The README links to a committed synthetic MP4 generated through the Playwright plus `playwright-recast` workflow.
 - The desktop visual suite covers keyboard focus visibility, accessible names for icon-only controls, contrast floors for core text, and removal of fake or unsupported action chrome.
 - A private-safe proof CLI exists at `crates/whatsvault-proof`.
+- The private-safe proof CLI has located WhatsApp `ChatStorage.sqlite` through a real local iPhone backup `Manifest.db`, confirmed the physical backup file exists, read nonzero aggregate database counts, read the real chat list, and imported a real chat into the normalized model without printing paths, identifiers, names, message bodies, or filenames.
 - A macOS `.app` bundle and DMG can be built locally with Tauri, and release checksum manifests can be generated from the bundle outputs.
-- Visible packaged-window smoke on this local macOS 26.5.1 machine is currently blocked by the upstream Tauri/Tao blank-window issue tracked at [tauri-apps/tauri#15517](https://github.com/tauri-apps/tauri/issues/15517). Do not treat browser visual checks as a substitute for packaged app smoke.
+- Visible packaged-window smoke from the generated macOS app bundle opens to a nonblank source screen locally.
 - CI and draft-release workflows are configured for macOS Apple Silicon, macOS Intel, and Windows Tauri builds.
 - Release checksum manifests can be generated from Tauri bundle outputs and are uploaded by the draft-release workflow.
-- The real local iPhone-backup proof remains separate from the export-ZIP viewer path.
+- Real local backup media preview and bounded HTML export smoke have passed from the packaged macOS app without committing private artifacts.
+
+Public-safe proof details live in [docs/proof-evidence.md](docs/proof-evidence.md). Do not add private proof dumps, paths, screenshots, media, or exported chats to the repository.
 
 ## Development
 
@@ -130,7 +138,25 @@ cd apps/desktop
 npm run hygiene:public
 ```
 
-The guard scans Git-tracked files plus local non-ignored new files for private backups, transcripts, databases, media, local paths, and personal roadmap-only material.
+The guard scans Git-tracked files plus local non-ignored new files for private backups, transcripts, databases, media, local paths, personal roadmap-only material, and unexpected changes to the committed synthetic demo assets.
+
+Run the release-readiness status guard:
+
+```sh
+cd apps/desktop
+npm run release:readiness
+```
+
+This command passes when the current pre-alpha blockers are documented honestly. Before a stable public release, `npm run release:preflight` must pass; today it is expected to fail until macOS notarized signing and Windows code signing are configured.
+
+Inspect local signing inputs without printing secret values:
+
+```sh
+cd apps/desktop
+npm run release:signing
+```
+
+The release workflow can generate platform signing config from GitHub secrets at runtime; certificate material and passwords must stay in GitHub Secrets or local ignored files.
 
 Run desktop visual layout checks:
 
@@ -183,8 +209,9 @@ npm run release:checksums
 
 Current HTML export behavior:
 
-- Exports the loaded WhatsApp export ZIP chat to one `.html` file.
-- Exports the selected iPhone backup chat to one `.html` file when the backup path and selected chat id are available. This path is covered by synthetic tests; real-backup proof is still pending.
+- Exports the loaded WhatsApp export ZIP chat or selected iPhone-backup chat to one `.html` file.
+- The WhatsApp export ZIP path imports the latest bounded message window for large transcripts instead of returning an unbounded in-memory message list.
+- The iPhone-backup export path runs behind the Tauri command boundary with bounded recent-message export, synthetic tests, and real local backup smoke.
 - Escapes message text, sender names, filenames, and titles.
 - Embeds media as data URLs when the attachment has a known browser media type and fits within the local per-file and total export size limits.
 - Lists media that cannot be embedded instead of failing the export.
@@ -213,6 +240,6 @@ WHATSVAULT_PRIVATE_EXPORT_ZIP="/path/to/private-export.zip" \
 
 ## Development Notes
 
-The exported ZIP viewer is the first fully proven desktop path. The hard iPhone-backup gate remains locating and reading WhatsApp data from a real local iPhone backup through `Manifest.db`.
+The exported ZIP viewer was the first fully proven desktop path. The first hard iPhone-backup gates now pass: WhatsVault can locate WhatsApp data from a real local iPhone backup through `Manifest.db`, read `ChatStorage.sqlite`, render a real backup chat, preview bounded media, and export a bounded chat HTML file from the packaged desktop app without committing private artifacts. The next hard gate is release hardening: signed/notarized macOS output, Windows signing, and clean-machine install/open proof.
 
 Real private exports and backups must stay in ignored local paths. Committed tests use synthetic fixtures or ignored private samples.

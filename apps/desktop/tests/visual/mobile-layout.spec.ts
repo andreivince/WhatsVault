@@ -19,7 +19,10 @@ test.use({
 });
 
 test("mobile backup chat keeps the selected avatar clear of the viewport edge", async ({ page }) => {
-  await page.goto("/?demo=backup-chat");
+  await page.goto("/?demo=backups");
+
+  await page.locator(".backup-row.openable").first().click();
+  await page.locator(".backup-chat-row").first().click();
 
   await expect(page.getByTestId(TEST_IDS.conversationHeader)).toBeVisible();
   await expect(page.getByTestId(TEST_IDS.chatTitle)).toHaveText("Design Preview");
@@ -27,6 +30,8 @@ test("mobile backup chat keeps the selected avatar clear of the viewport edge", 
   const avatarBox = await page.locator(".conversation-header .avatar").boundingBox();
   expect(avatarBox).not.toBeNull();
   expect(avatarBox?.x).toBeGreaterThanOrEqual(18);
+  expect(avatarBox?.y).toBeGreaterThanOrEqual(0);
+  expect(avatarBox?.y).toBeLessThan(120);
   await expectNoHorizontalOverflow(page);
 });
 

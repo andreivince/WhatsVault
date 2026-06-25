@@ -1,6 +1,6 @@
 use std::{
-    collections::{HashMap, HashSet},
-    io::{Read, Seek},
+    collections::{HashMap, HashSet, VecDeque},
+    io::{BufRead, BufReader, Read, Seek},
     path::Path,
 };
 
@@ -26,6 +26,8 @@ pub enum ExportZipError {
 
 pub type Result<T> = std::result::Result<T, ExportZipError>;
 
+pub const DEFAULT_WHATSAPP_EXPORT_IMPORT_MAX_MESSAGES: usize = 2_000;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExportAttachmentPayload {
     pub filename: String,
@@ -34,18 +36,59 @@ pub struct ExportAttachmentPayload {
     pub bytes: Vec<u8>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WhatsappExportImportOptions {
+    pub max_messages: Option<usize>,
+}
+
+impl WhatsappExportImportOptions {
+    pub fn recent(max_messages: usize) -> Self {
+        Self {
+            max_messages: Some(max_messages),
+        }
+    }
+
+    pub fn all_messages() -> Self {
+        Self { max_messages: None }
+    }
+}
+
+impl Default for WhatsappExportImportOptions {
+    fn default() -> Self {
+        Self::recent(DEFAULT_WHATSAPP_EXPORT_IMPORT_MAX_MESSAGES)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WhatsappExportImportResult {
+    pub imported: ChatImport,
+    pub skipped_message_count: usize,
+}
+
 pub fn import_whatsapp_export_zip<R>(_reader: R) -> Result<ChatImport>
+where
+    R: Read + Seek,
+{
+    Ok(
+        import_whatsapp_export_zip_with_options(_reader, WhatsappExportImportOptions::default())?
+            .imported,
+    )
+}
+
+pub fn import_whatsapp_export_zip_with_options<R>(
+    _reader: R,
+    options: WhatsappExportImportOptions,
+) -> Result<WhatsappExportImportResult>
 where
     R: Read + Seek,
 {
     let mut archive = ZipArchive::new(_reader)?;
     let transcript_name = find_transcript_name(&mut archive)?;
     let attachments = collect_attachments(&mut archive, &transcript_name);
-    let transcript = read_transcript(&mut archive, &transcript_name)?;
-    let mut imported = parse_transcript(&transcript, &attachments);
-    imported.transcript_name = Some(transcript_name);
-    imported.attachments = attachments;
-    Ok(imported)
+    let transcript_file = archive.by_name(&transcript_name)?;
+    let mut result = parse_transcript(transcript_file, &attachments, options)?;
+    result.imported.transcript_name = Some(transcript_name);
+    Ok(result)
 }
 
 pub fn read_whatsapp_export_attachment<R>(
@@ -59,7 +102,31 @@ where
     let Some(requested_archive_path) = normalized_archive_name(archive_path) else {
         return Ok(None);
     };
+    let mut payloads = read_whatsapp_export_attachments(reader, [archive_path], max_size_bytes)?;
+
+    Ok(payloads.remove(&requested_archive_path))
+}
+
+pub fn read_whatsapp_export_attachments<R, I, S>(
+    reader: R,
+    archive_paths: I,
+    max_size_bytes: u64,
+) -> Result<HashMap<String, ExportAttachmentPayload>>
+where
+    R: Read + Seek,
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut requested_archive_paths: HashSet<String> = archive_paths
+        .into_iter()
+        .filter_map(|path| normalized_archive_name(path.as_ref()))
+        .collect();
+    if requested_archive_paths.is_empty() {
+        return Ok(HashMap::new());
+    }
+
     let mut archive = ZipArchive::new(reader)?;
+    let mut payloads = HashMap::new();
 
     for index in 0..archive.len() {
         let mut file = archive.by_index(index)?;
@@ -70,11 +137,15 @@ where
         let Some(current_archive_path) = normalized_archive_name(file.name()) else {
             continue;
         };
-        if current_archive_path != requested_archive_path {
+        if !requested_archive_paths.contains(&current_archive_path) {
             continue;
         }
         if file.size() > max_size_bytes {
-            return Ok(None);
+            requested_archive_paths.remove(&current_archive_path);
+            if requested_archive_paths.is_empty() {
+                break;
+            }
+            continue;
         }
 
         let filename = Path::new(&current_archive_path)
@@ -85,15 +156,22 @@ where
         let mut bytes = Vec::with_capacity(file.size() as usize);
         file.read_to_end(&mut bytes)?;
 
-        return Ok(Some(ExportAttachmentPayload {
-            kind: classify_whatsapp_export_attachment(&filename),
-            filename,
-            size_bytes: file.size(),
-            bytes,
-        }));
+        payloads.insert(
+            current_archive_path.clone(),
+            ExportAttachmentPayload {
+                kind: classify_whatsapp_export_attachment(&filename),
+                filename,
+                size_bytes: file.size(),
+                bytes,
+            },
+        );
+        requested_archive_paths.remove(&current_archive_path);
+        if requested_archive_paths.is_empty() {
+            break;
+        }
     }
 
-    Ok(None)
+    Ok(payloads)
 }
 
 pub fn classify_whatsapp_export_attachment(filename: &str) -> AttachmentKind {
@@ -202,38 +280,49 @@ where
     attachments
 }
 
-fn read_transcript<R>(archive: &mut ZipArchive<R>, transcript_name: &str) -> Result<String>
+fn parse_transcript<R>(
+    reader: R,
+    attachments: &[Attachment],
+    options: WhatsappExportImportOptions,
+) -> Result<WhatsappExportImportResult>
 where
-    R: Read + Seek,
+    R: Read,
 {
-    let mut file = archive.by_name(transcript_name)?;
-    let mut bytes = Vec::with_capacity(file.size() as usize);
-    file.read_to_end(&mut bytes)?;
-
-    Ok(String::from_utf8_lossy(&bytes)
-        .trim_start_matches('\u{feff}')
-        .to_owned())
-}
-
-fn parse_transcript(transcript: &str, attachments: &[Attachment]) -> ChatImport {
-    let mut messages = Vec::new();
+    let mut messages = VecDeque::new();
     let mut issues = Vec::new();
+    let mut line = Vec::new();
+    let mut reader = BufReader::new(reader);
+    let mut total_message_count = 0_usize;
+    let mut skipped_message_count = 0_usize;
 
-    for line in transcript.lines() {
+    loop {
+        line.clear();
+        if reader.read_until(b'\n', &mut line)? == 0 {
+            break;
+        }
+
+        let line = String::from_utf8_lossy(&line);
+        let line = line.trim_end_matches(['\r', '\n']);
         let line = normalize_transcript_line(line);
         if line.is_empty() {
             continue;
         }
 
-        if let Some(parsed) = parse_message_line(&line, messages.len()) {
-            messages.push(parsed);
+        if let Some(parsed) = parse_message_line(&line, total_message_count) {
+            total_message_count = total_message_count.saturating_add(1);
+            push_bounded_message(
+                &mut messages,
+                parsed,
+                options.max_messages,
+                &mut skipped_message_count,
+            );
             continue;
         }
 
-        if let Some(last) = messages.last_mut() {
+        if let Some(last) = messages.back_mut() {
             last.body.push('\n');
             last.body.push_str(&line);
-        } else {
+        } else if total_message_count == 0 {
             issues.push(ImportIssue {
                 code: ImportIssueCode::ContinuationWithoutMessage,
                 message: "Transcript contains a continuation line before the first message"
@@ -242,15 +331,52 @@ fn parse_transcript(transcript: &str, attachments: &[Attachment]) -> ChatImport 
         }
     }
 
+    let mut messages = Vec::from(messages);
     resolve_message_attachments(&mut messages, attachments, &mut issues);
-
-    ChatImport {
-        source_kind: SourceKind::WhatsappExportZip,
-        transcript_name: None,
-        messages,
-        attachments: Vec::new(),
-        issues,
+    if skipped_message_count > 0 {
+        issues.push(ImportIssue {
+            code: ImportIssueCode::MessageWindowTruncated,
+            message: format!(
+                "Only the latest {} messages were loaded; older messages were skipped for performance",
+                messages.len()
+            ),
+        });
     }
+    let attachments = referenced_attachments(&messages, attachments);
+
+    Ok(WhatsappExportImportResult {
+        imported: ChatImport {
+            source_kind: SourceKind::WhatsappExportZip,
+            transcript_name: None,
+            messages,
+            attachments,
+            issues,
+        },
+        skipped_message_count,
+    })
+}
+
+fn push_bounded_message(
+    messages: &mut VecDeque<Message>,
+    message: Message,
+    max_messages: Option<usize>,
+    skipped_message_count: &mut usize,
+) {
+    let Some(max_messages) = max_messages else {
+        messages.push_back(message);
+        return;
+    };
+
+    if max_messages == 0 {
+        *skipped_message_count = skipped_message_count.saturating_add(1);
+        return;
+    }
+
+    if messages.len() >= max_messages {
+        messages.pop_front();
+        *skipped_message_count = skipped_message_count.saturating_add(1);
+    }
+    messages.push_back(message);
 }
 
 fn parse_message_line(line: &str, index: usize) -> Option<Message> {
@@ -332,6 +458,19 @@ fn resolve_message_attachments(
             }
         }
     }
+}
+
+fn referenced_attachments(messages: &[Message], attachments: &[Attachment]) -> Vec<Attachment> {
+    let referenced_ids: HashSet<&str> = messages
+        .iter()
+        .flat_map(|message| message.attachment_ids.iter().map(String::as_str))
+        .collect();
+
+    attachments
+        .iter()
+        .filter(|attachment| referenced_ids.contains(attachment.id.as_str()))
+        .cloned()
+        .collect()
 }
 
 fn extract_media_like_tokens(text: &str) -> Vec<String> {

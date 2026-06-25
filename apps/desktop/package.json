@@ -14,6 +14,11 @@
     "demo:screenshot": "node scripts/capture-readme-screenshot.mjs",
     "demo:video": "npm run demo:record && npm run demo:render",
     "hygiene:public": "node scripts/public-hygiene.mjs",
+    "release:signing": "node scripts/signing-readiness.mjs",
+    "release:signing:strict": "node scripts/signing-readiness.mjs --strict",
+    "release:prepare-signing-config": "node scripts/prepare-tauri-signing-config.mjs",
+    "release:readiness": "node scripts/release-readiness.mjs",
+    "release:preflight": "node scripts/release-readiness.mjs --stable",
     "release:checksums": "node scripts/generate-release-checksums.mjs",
     "release:version": "node scripts/print-release-version.mjs",
     "tauri": "tauri"

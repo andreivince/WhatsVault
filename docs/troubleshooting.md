@@ -37,7 +37,14 @@ Useful safe evidence:
 
 ## iPhone Backup Is Not Detected
 
-Backup discovery/status is available in the desktop app, but backup-to-chat browsing is still in proof work. Current synthetic tests cover path discovery, metadata plists, and `Manifest.db` mapping; real backup-to-chat browsing is not complete.
+Backup discovery/status is available in the desktop app, and real backup chat rendering has passed local smoke. If automatic scanning is blocked by macOS filesystem access, use **Choose folder** in the iPhone backups panel and select either the MobileSync `Backup` folder or one specific device backup folder.
+
+Check:
+
+1. The backup is local on this computer.
+2. The backup folder contains `Manifest.db`.
+3. The backup is not encrypted.
+4. WhatsApp was installed on the backed-up device.
 
 Useful safe evidence:
 
@@ -49,17 +56,30 @@ Useful safe evidence:
 
 ## Desktop Window Opens Blank
 
-On macOS 26, Tauri 2.11.x with Tao 0.35.3 can open a real application window while the WebView surface stays blank. This is tracked upstream at [tauri-apps/tauri#15517](https://github.com/tauri-apps/tauri/issues/15517).
+The generated macOS app bundle currently opens to a nonblank source screen in local smoke. If a packaged window opens blank on another machine, report it as a packaging/runtime issue, not as a chat parsing issue.
 
 Do not report private chat data for this issue. Useful safe evidence:
 
 - macOS version
-- Tauri, Wry, and Tao versions
+- app version
 - whether the browser preview renders
 - whether the packaged `.app` creates a window
 - a screenshot of the blank window only
 
 The browser visual suite is useful for UI regression checks, but it does not prove packaged Tauri rendering.
+
+## Stable Release Preflight Fails On Code Signing
+
+This is expected until release signing is configured.
+
+Run:
+
+```sh
+cd apps/desktop
+npm run release:signing
+```
+
+The command lists missing macOS and Windows signing inputs by variable or config key name only. Do not paste certificate contents, passwords, private keys, real `.p12` files, or Apple notarization keys into public issues.
 
 ## HTML Export Fails
 

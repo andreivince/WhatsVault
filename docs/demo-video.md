@@ -30,7 +30,7 @@ The current committed public demo asset is:
 
 - `docs/assets/whatsvault-readme-demo.mp4`
 
-To refresh it, run `npm run demo:video`, inspect the generated MP4, then copy the approved synthetic output from `apps/desktop/target/readme-demo/rendered/whatsvault-readme-demo.mp4` to the committed asset path above.
+To refresh it, run `npm run demo:video`, inspect the generated MP4, then copy the approved synthetic output from `apps/desktop/target/readme-demo/rendered/whatsvault-readme-demo.mp4` to the committed asset path above. Update `docs/assets/demo-assets-manifest.json` with the new SHA-256 hash only after confirming the asset uses synthetic data.
 
 ## README Screenshot
 
@@ -68,4 +68,5 @@ Public-safety rules:
 - Do not use real exported chats, real backups, real names, or real media in README videos.
 - Keep narration, subtitles, and demo messages in English.
 - Keep private-looking text detection centralized in `apps/desktop/scripts/privacy-rules.mjs`; the README screenshot capture, demo walkthrough, and public repository hygiene guard use the same evaluator.
+- Keep committed README media listed in `docs/assets/demo-assets-manifest.json`; `npm run hygiene:public` verifies the asset hashes to catch accidental private replacements.
 - Commit only small, intentional README assets generated from synthetic data.

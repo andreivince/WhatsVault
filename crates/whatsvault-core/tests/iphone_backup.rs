@@ -3,9 +3,11 @@ use std::{fs, path::Path};
 use rusqlite::Connection;
 use tempfile::tempdir;
 use whatsvault_core::sources::iphone_backup::{
-    discover_backup_candidates, find_whatsapp_manifest_file_by_relative_path,
-    find_whatsapp_manifest_files, physical_backup_file_path, read_backup_metadata,
-    read_manifest_files, resolve_whatsapp_media_file_path,
+    discover_backup_candidates, discover_backup_candidates_from_selected_path,
+    find_whatsapp_manifest_file_by_relative_path, find_whatsapp_manifest_files,
+    physical_backup_file_path, read_backup_metadata, read_manifest_files,
+    resolve_whatsapp_media_file_path, resolve_whatsapp_media_file_paths,
+    summarize_whatsapp_manifest_files,
 };
 
 fn create_manifest_db(path: &Path) {
@@ -66,6 +68,36 @@ fn discovers_backup_candidates_that_have_manifest_db() {
     assert!(candidates[0].manifest_plist_path.is_some());
     assert!(candidates[0].info_plist_path.is_some());
     assert!(candidates[0].status_plist_path.is_some());
+}
+
+#[test]
+fn selected_backup_root_discovers_child_backup_candidates() {
+    let root = tempdir().unwrap();
+    let backup = root.path().join("device-backup-a");
+    fs::create_dir_all(&backup).unwrap();
+    fs::write(backup.join("Manifest.db"), b"").unwrap();
+
+    let candidates = discover_backup_candidates_from_selected_path(root.path()).unwrap();
+
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].id, "device-backup-a");
+}
+
+#[test]
+fn selected_device_backup_folder_is_accepted_directly() {
+    let root = tempdir().unwrap();
+    let backup = root.path().join("device-backup-a");
+    fs::create_dir_all(&backup).unwrap();
+    fs::write(backup.join("Manifest.db"), b"").unwrap();
+
+    let candidates = discover_backup_candidates_from_selected_path(&backup).unwrap();
+
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].id, "device-backup-a");
+    assert_eq!(
+        candidates[0].manifest_db_path,
+        backup.join("Manifest.db").to_string_lossy()
+    );
 }
 
 #[test]
@@ -210,6 +242,44 @@ fn finds_whatsapp_targets_from_manifest_db() {
 }
 
 #[test]
+fn summarizes_whatsapp_manifest_targets_without_materializing_file_rows() {
+    let root = tempdir().unwrap();
+    let manifest = root.path().join("Manifest.db");
+    create_manifest_db(&manifest);
+    let connection = Connection::open(&manifest).unwrap();
+    insert_manifest_file(
+        &connection,
+        "chat-storage-file-id",
+        "AppDomainGroup-group.net.whatsapp.WhatsApp.shared",
+        "ChatStorage.sqlite",
+    );
+    insert_manifest_file(
+        &connection,
+        "contacts-file-id",
+        "AppDomainGroup-group.net.whatsapp.WhatsApp.shared",
+        "/ContactsV2.sqlite",
+    );
+    insert_manifest_file(
+        &connection,
+        "media-file-id",
+        "AppDomainGroup-group.net.whatsapp.WhatsApp.shared",
+        "\\Message\\Media\\photo.jpg",
+    );
+    insert_manifest_file(
+        &connection,
+        "other-media-file-id",
+        "AppDomainGroup-group.example.OtherApp",
+        "Message/Media/ignored.jpg",
+    );
+
+    let summary = summarize_whatsapp_manifest_files(&manifest).unwrap();
+
+    assert!(summary.has_chat_storage);
+    assert!(summary.has_contacts);
+    assert_eq!(summary.media_file_count, 1);
+}
+
+#[test]
 fn resolves_manifest_file_ids_to_modern_backup_storage_paths() {
     let root = tempdir().unwrap();
     let backup_root = root.path().join("device-backup-a");
@@ -247,9 +317,11 @@ fn resolves_whatsapp_media_relative_paths_to_physical_backup_files() {
 }
 
 #[test]
-fn finds_whatsapp_manifest_file_by_normalized_relative_path() {
+fn resolves_chat_storage_media_paths_under_manifest_message_prefix() {
     let root = tempdir().unwrap();
-    let manifest = root.path().join("Manifest.db");
+    let backup_root = root.path().join("device-backup-a");
+    let manifest = backup_root.join("Manifest.db");
+    fs::create_dir_all(&backup_root).unwrap();
     create_manifest_db(&manifest);
     let connection = Connection::open(&manifest).unwrap();
     insert_manifest_file(
@@ -259,10 +331,73 @@ fn finds_whatsapp_manifest_file_by_normalized_relative_path() {
         "Message/Media/photo.jpg",
     );
 
+    let resolved =
+        resolve_whatsapp_media_file_path(&backup_root, &manifest, "Media/photo.jpg").unwrap();
+
+    assert_eq!(resolved, Some(backup_root.join("me").join("media-file-id")));
+}
+
+#[test]
+fn resolves_multiple_whatsapp_media_paths_with_one_manifest_reader() {
+    let root = tempdir().unwrap();
+    let backup_root = root.path().join("device-backup-a");
+    let manifest = backup_root.join("Manifest.db");
+    fs::create_dir_all(&backup_root).unwrap();
+    create_manifest_db(&manifest);
+    let connection = Connection::open(&manifest).unwrap();
+    insert_manifest_file(
+        &connection,
+        "photo-file-id",
+        "AppDomainGroup-group.net.whatsapp.WhatsApp.shared",
+        "Message/Media/photo.jpg",
+    );
+    insert_manifest_file(
+        &connection,
+        "audio-file-id",
+        "AppDomainGroup-group.net.whatsapp.WhatsApp.shared",
+        "Message/Media/audio.opus",
+    );
+
+    let resolved = resolve_whatsapp_media_file_paths(
+        &backup_root,
+        &manifest,
+        [
+            "\\Message\\Media\\photo.jpg",
+            "Media/audio.opus",
+            "Media/missing.jpg",
+        ],
+    )
+    .unwrap();
+
+    assert_eq!(resolved.len(), 2);
+    assert_eq!(
+        resolved["Message/Media/photo.jpg"],
+        backup_root.join("ph").join("photo-file-id")
+    );
+    assert_eq!(
+        resolved["Media/audio.opus"],
+        backup_root.join("au").join("audio-file-id")
+    );
+    assert!(!resolved.contains_key("Media/missing.jpg"));
+}
+
+#[test]
+fn finds_whatsapp_manifest_file_by_normalized_relative_path() {
+    let root = tempdir().unwrap();
+    let manifest = root.path().join("Manifest.db");
+    create_manifest_db(&manifest);
+    let connection = Connection::open(&manifest).unwrap();
+    insert_manifest_file(
+        &connection,
+        "media-file-id",
+        "AppDomainGroup-group.net.whatsapp.WhatsApp.shared",
+        "\\Message\\Media\\photo.jpg",
+    );
+
     let file = find_whatsapp_manifest_file_by_relative_path(&manifest, "/Message/Media/photo.jpg")
         .unwrap()
         .unwrap();
 
     assert_eq!(file.file_id, "media-file-id");
-    assert_eq!(file.relative_path, "Message/Media/photo.jpg");
+    assert_eq!(file.relative_path, "\\Message\\Media\\photo.jpg");
 }

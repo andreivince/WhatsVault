@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   createChatSummary,
+  createAvatarInitials,
   createMessageWindow,
   createExportFilename,
   deriveChatTitle,
@@ -9,7 +10,11 @@ import {
   filterMessagesByDate,
   filterChats,
   filterMessages,
+  messageCountLabel,
   messageDateKey,
+  messageFilterResultLabel,
+  messageWindowNotice,
+  searchResultsNotice,
   isOutgoingMessage,
 } from "./chat";
 import { createLoadedChatSource } from "./source";
@@ -158,6 +163,40 @@ describe("chat domain helpers", () => {
     expect(createMessageWindow(messages, 0)).toEqual(messages);
   });
 
+  it("labels bounded imports as loaded recent-message windows", () => {
+    const imported = chatImport({
+      messages: [message("1", "a"), message("2", "b")],
+      issues: [
+        {
+          code: "message_window_truncated",
+          message: "Loaded the latest 2 messages; older messages stay searchable later.",
+        },
+      ],
+    });
+
+    expect(messageWindowNotice(imported)).toBe(
+      "Loaded the latest 2 messages; older messages stay searchable later.",
+    );
+    expect(messageCountLabel(imported)).toBe("2 recent messages loaded");
+    expect(messageFilterResultLabel(1, imported)).toBe("1 matches in loaded messages");
+    expect(messageFilterResultLabel(1, chatImport())).toBe("1 matches");
+  });
+
+  it("reads bounded backup-search notices from shared import issues", () => {
+    const imported = chatImport({
+      issues: [
+        {
+          code: "search_results_truncated",
+          message: "Only the latest 500 matching messages were loaded",
+        },
+      ],
+    });
+
+    expect(searchResultsNotice(imported)).toBe(
+      "Only the latest 500 matching messages were loaded",
+    );
+  });
+
   it("detects common exported self sender labels", () => {
     expect(isOutgoingMessage(message("1", "reply", "You"))).toBe(true);
     expect(isOutgoingMessage(message("2", "reply", "Você"))).toBe(true);
@@ -167,5 +206,11 @@ describe("chat domain helpers", () => {
   it("formats common WhatsApp export timestamps compactly", () => {
     expect(displayTimestamp("01/02/2026, 09:15:00")).toBe("09:15");
     expect(displayTimestamp("02/01/2026, 9:15 PM")).toBe("9:15 PM");
+  });
+
+  it("creates avatar initials without broken emoji surrogate characters", () => {
+    expect(createAvatarInitials("Baby 🩵")).toBe("B");
+    expect(createAvatarInitials("🩵 Family")).toBe("F");
+    expect(createAvatarInitials("2025-2026 LAWA Scholars")).toBe("2L");
   });
 });

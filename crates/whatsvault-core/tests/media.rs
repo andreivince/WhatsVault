@@ -1,5 +1,8 @@
 use whatsvault_core::{
-    media::{attachment_kind_from_filename, attachment_kind_from_mime_or_filename},
+    media::{
+        attachment_display_label, attachment_kind_from_filename,
+        attachment_kind_from_mime_or_filename,
+    },
     AttachmentKind,
 };
 
@@ -44,5 +47,18 @@ fn prefers_mime_type_when_it_is_more_specific_than_filename() {
     assert_eq!(
         attachment_kind_from_mime_or_filename(None, "sticker.webp"),
         AttachmentKind::Photo
+    );
+}
+
+#[test]
+fn exposes_human_attachment_labels_for_chat_previews() {
+    assert_eq!(attachment_display_label(AttachmentKind::Photo), "Photo");
+    assert_eq!(
+        attachment_display_label(AttachmentKind::Audio),
+        "Voice message"
+    );
+    assert_eq!(
+        attachment_display_label(AttachmentKind::Unknown),
+        "Attachment"
     );
 }

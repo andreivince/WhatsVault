@@ -56,6 +56,7 @@ test("keyboard focus is visible on primary desktop controls", async ({ page }) =
   await page.getByTestId(TEST_IDS.openSourceButton).focus();
   await expectFocusRing(page, `[data-testid="${TEST_IDS.openSourceButton}"]`);
 
+  await page.goto("/?demo=1");
   await page.getByTestId(TEST_IDS.exportButton).focus();
   await expectFocusRing(page, `[data-testid="${TEST_IDS.exportButton}"]`);
 
@@ -78,6 +79,12 @@ test("icon-only buttons keep accessible names", async ({ page }) => {
   );
 
   expect(unlabeledButtons).toEqual([]);
+});
+
+test("backup chat rows stay exposed as buttons", async ({ page }) => {
+  await page.goto("/?demo=backups");
+
+  await expect(page.getByRole("button", { name: /Design Preview/ })).toHaveCount(2);
 });
 
 test("core text colors meet the app contrast floor", async ({ page }) => {

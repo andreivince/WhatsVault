@@ -9,6 +9,9 @@ export interface ChatSummary {
   mediaCount: number;
 }
 
+export const MESSAGE_WINDOW_TRUNCATED_CODE = "message_window_truncated";
+export const SEARCH_RESULTS_TRUNCATED_CODE = "search_results_truncated";
+
 export function createChatSummary(
   imported: ChatImport,
   source: LoadedChatSource | null,
@@ -28,6 +31,28 @@ export function createChatSummary(
   };
 }
 
+export function messageWindowNotice(imported: ChatImport): string | null {
+  return imported.issues.find((issue) => issue.code === MESSAGE_WINDOW_TRUNCATED_CODE)?.message ?? null;
+}
+
+export function searchResultsNotice(imported: ChatImport): string | null {
+  return imported.issues.find((issue) => issue.code === SEARCH_RESULTS_TRUNCATED_CODE)?.message ?? null;
+}
+
+export function messageCountLabel(imported: ChatImport): string {
+  const loadedCount = imported.messages.length.toLocaleString();
+  return messageWindowNotice(imported)
+    ? `${loadedCount} recent messages loaded`
+    : `${loadedCount} messages`;
+}
+
+export function messageFilterResultLabel(matchCount: number, imported: ChatImport): string {
+  const formattedCount = matchCount.toLocaleString();
+  return messageWindowNotice(imported)
+    ? `${formattedCount} matches in loaded messages`
+    : `${formattedCount} matches`;
+}
+
 export function deriveChatTitle(
   transcriptName: string | null,
   sourceDisplayName: string | null,
@@ -43,6 +68,27 @@ export function deriveChatTitle(
     .replace(/^WhatsApp Chat\s*-\s*/i, "")
     .replace(/^_chat$/i, "Imported chat")
     .trim() || "Imported chat";
+}
+
+export function createAvatarInitials(title: string): string {
+  const initials = title
+    .split(/\s+/)
+    .map(readableInitial)
+    .filter((initial): initial is string => Boolean(initial))
+    .slice(0, 2)
+    .join("");
+
+  return initials || "WV";
+}
+
+function readableInitial(value: string): string | null {
+  for (const character of Array.from(value.normalize("NFKC"))) {
+    if (/[\p{L}\p{N}]/u.test(character)) {
+      return character.toLocaleUpperCase();
+    }
+  }
+
+  return null;
 }
 
 export function createExportFilename(title: string): string {

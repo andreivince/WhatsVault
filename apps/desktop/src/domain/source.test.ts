@@ -74,7 +74,9 @@ describe("source domain helpers", () => {
     });
     expect(sourceProfile("iphone_backup")).toMatchObject({
       pickerName: "iPhone backup",
-      availabilityLabel: "Proof work",
+      availabilityLabel: "Preview ready",
+      availabilityDetail:
+        "Real backup chats render locally with bounded media preview and HTML export.",
       supportsHtmlExport: true,
     });
   });

@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "assets": [
+    {
+      "path": "docs/assets/whatsvault-readme-demo.mp4",
+      "sha256": "0cc4c7b8062f9a72193bde593de7b297a3d1b14c99ba2d74a0c2f2727f2c0ad1",
+      "source": "synthetic Playwright demo"
+    },
+    {
+      "path": "docs/assets/whatsvault-synthetic-demo.png",
+      "sha256": "68e219a2c68444378b51e2f4421bba15ba034e634c8561b27df255c34f0b9202",
+      "source": "synthetic Playwright demo"
+    }
+  ]
+}

@@ -4,9 +4,10 @@ import { createLoadedBackupSource } from "../domain/source";
 import type {
   Attachment,
   AttachmentPreview,
-  Chat,
   ChatImport,
+  IphoneBackupChatSearchResult,
   HtmlExportResult,
+  IphoneBackupChatsResult,
   IphoneBackupCandidate,
   LoadedChatSource,
 } from "../models";
@@ -20,12 +21,44 @@ export function isDesktopRuntime(): boolean {
   return "__TAURI_INTERNALS__" in window;
 }
 
+async function getCurrentDesktopWindow() {
+  if (!isDesktopRuntime()) {
+    return null;
+  }
+
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  return getCurrentWindow();
+}
+
+export async function minimizeAppWindow(): Promise<void> {
+  const appWindow = await getCurrentDesktopWindow();
+  await appWindow?.minimize();
+}
+
+export async function toggleMaximizeAppWindow(): Promise<void> {
+  const appWindow = await getCurrentDesktopWindow();
+  await appWindow?.toggleMaximize();
+}
+
+export async function closeAppWindow(): Promise<void> {
+  const appWindow = await getCurrentDesktopWindow();
+  await appWindow?.close();
+}
+
 export async function listIphoneBackups(): Promise<IphoneBackupCandidate[]> {
   if (!isDesktopRuntime()) {
     return [];
   }
 
   return invoke<IphoneBackupCandidate[]>("list_iphone_backups");
+}
+
+export async function chooseIphoneBackupFolder(): Promise<IphoneBackupCandidate[] | null> {
+  if (!isDesktopRuntime()) {
+    return [];
+  }
+
+  return invoke<IphoneBackupCandidate[] | null>("choose_iphone_backup_folder");
 }
 
 export async function openLocalChatSource(): Promise<OpenLocalChatSourceResult | null> {
@@ -38,13 +71,27 @@ export async function openLocalChatSource(): Promise<OpenLocalChatSourceResult |
 
 export async function listIphoneBackupChats(
   backup: IphoneBackupCandidate,
-): Promise<Chat[]> {
+): Promise<IphoneBackupChatsResult> {
   if (!isDesktopRuntime()) {
-    return [];
+    return { chats: [], isTruncated: false, limit: 0 };
   }
 
-  return invoke<Chat[]>("list_iphone_backup_chats", {
+  return invoke<IphoneBackupChatsResult>("list_iphone_backup_chats", {
     backupHandle: backup.handle,
+  });
+}
+
+export async function searchIphoneBackupChats(
+  backup: IphoneBackupCandidate,
+  query: string,
+): Promise<IphoneBackupChatsResult> {
+  if (!isDesktopRuntime()) {
+    return { chats: [], isTruncated: false, limit: 0 };
+  }
+
+  return invoke<IphoneBackupChatsResult>("search_iphone_backup_chats", {
+    backupHandle: backup.handle,
+    query,
   });
 }
 
@@ -61,6 +108,21 @@ export async function importIphoneBackupChat(
     source: createLoadedBackupSource(backup, chatId),
     imported,
   };
+}
+
+export async function searchIphoneBackupChat(
+  source: LoadedChatSource,
+  query: string,
+): Promise<IphoneBackupChatSearchResult> {
+  if (source.kind !== "iphone_backup" || !source.chatId) {
+    throw new Error("Open a specific iPhone backup chat before searching the backup.");
+  }
+
+  return invoke<IphoneBackupChatSearchResult>("search_iphone_backup_chat", {
+    backupHandle: source.handle,
+    chatId: source.chatId,
+    query,
+  });
 }
 
 export async function readLocalAttachmentPreview(

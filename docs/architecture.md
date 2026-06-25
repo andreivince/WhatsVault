@@ -42,7 +42,8 @@ The export ZIP source is responsible for:
 4. Parsing transcript lines into normalized messages.
 5. Resolving transcript media references to ZIP entries.
 6. Reading bounded attachment payloads for media previews without extracting the whole archive.
-7. Returning the same shared app models used by the iPhone backup source.
+7. Returning a bounded latest-message window for large transcripts instead of materializing every message for the UI.
+8. Returning the same shared app models used by the iPhone backup source.
 
 ## Shared Model Boundary
 
@@ -119,14 +120,17 @@ Stack:
 
 Current commands:
 
-- `open_whatsapp_export`: opens the native ZIP picker in Rust, parses the selected ZIP through `sources::whatsapp_export_zip`, registers the real path behind an opaque source handle, and returns shared models plus safe display metadata.
+- `open_whatsapp_export`: opens the native ZIP picker in Rust, parses the selected ZIP through `sources::whatsapp_export_zip` into a bounded latest-message window, registers the real path behind an opaque source handle, and returns shared models plus safe display metadata.
 - `read_export_attachment_preview`: reads a bounded media payload from a registered ZIP source handle and returns a browser-safe data URL for preview.
 - `read_iphone_backup_attachment_preview`: resolves a WhatsApp media relative path through a registered backup handle and its `Manifest.db`, reads the bounded hashed backup file when present, and returns a browser-safe data URL for preview.
-- `export_whatsapp_export_html`: opens the native save dialog in Rust, imports the registered ZIP source handle, embeds bounded media through shared core rules, builds HTML through `exports::html`, and writes the selected output file without returning the private output path to React.
+- `export_whatsapp_export_html`: opens the native save dialog in Rust, imports the registered ZIP source handle into a bounded latest-message window, embeds bounded media through shared core rules, builds HTML through `exports::html`, and writes the selected output file without returning the private output path to React.
 - `export_iphone_backup_chat_html`: opens the native save dialog in Rust, resolves `ChatStorage.sqlite` through a registered backup handle and its `Manifest.db`, imports the selected chat by id, embeds bounded media through the backup media resolver, builds HTML through `exports::html`, and writes the selected output file without returning the private output path to React.
 - `list_iphone_backups`: scans default local backup roots, reads safe display metadata from plist files when present, inspects `Manifest.db` for WhatsApp files, and returns backup status summaries for the empty-state panel.
+- `choose_iphone_backup_folder`: opens a native folder picker when macOS denies automatic backup-root access, accepts either a MobileSync Backup folder or one device backup folder, and registers the result through the same opaque backup handles used by default scanning.
 - `list_iphone_backup_chats`: resolves `ChatStorage.sqlite` from a selected backup through `Manifest.db` and returns normalized chat summaries.
+- `search_iphone_backup_chats`: resolves `ChatStorage.sqlite` from a selected backup and searches backup chat names through a bounded backend query, so huge backup chat lists are not limited to the first visible sidebar window.
 - `import_iphone_backup_chat`: resolves `ChatStorage.sqlite` from a selected backup and imports one selected chat into the normalized `ChatImport` timeline model.
+- `search_iphone_backup_chat`: resolves `ChatStorage.sqlite` from a selected backup and searches one selected chat with a bounded latest-match result set, so huge histories stay responsive without exposing backup paths to React.
 
 The frontend may derive presentation details such as filtered message windows and chat-row summaries, but it must not parse WhatsApp transcript syntax or ZIP structure.
 
@@ -142,7 +146,7 @@ Frontend source handling should stay source-neutral:
 - `apps/desktop/src/domain/source.ts` owns source profiles such as labels, picker metadata, and safe display names.
 - `apps/desktop/src/services/desktop.ts` exposes source-neutral operations such as opening a local chat source, reading a local attachment preview, exporting the loaded chat, and listing local iPhone backup candidates.
 - React components receive a `LoadedChatSource` plus normalized `ChatImport` data. They should not call ZIP-specific or backup-specific commands directly.
-- The iPhone backup UI can show readable backup labels, encryption state when known, WhatsApp file-detection status, discovered chats for a selected ready backup, and a selected backup chat in the shared timeline. Real backup proof is still pending, so support docs must describe this as a covered UI path rather than verified end-user support.
+- The iPhone backup UI can show readable backup labels, encryption state when known, WhatsApp file-detection status, discovered chats for a selected ready backup, bounded backend search across backup chat names, selected backup chats in the shared timeline, bounded backend search for the selected chat, bounded media previews, and bounded HTML export. Real local backup smoke has verified chat rendering, media preview, and export without committing private artifacts.
 - The conversation timeline renders only a bounded recent message window by default and exposes an explicit "show earlier" action for older messages. This keeps large chats usable without requiring the UI to parse source-specific data.
 - Future iPhone backup work should extend the source profile and desktop service boundary instead of creating a parallel React flow.
 
@@ -163,8 +167,8 @@ Current modules:
 - `exports::html`: self-contained chat HTML generation with HTML escaping and embedded attachment support.
 - `media`: shared attachment media-type detection used by preview and export paths.
 - `sources::iphone_backup`: backup-root discovery, `Manifest.db` mapping, and fileID-to-physical-file resolution.
-- `sources::whatsapp_export_zip`: WhatsApp mobile export ZIP parsing, media classification, reference resolution, and bounded attachment payload lookup.
-- `whatsapp::chat_storage`: read-only `ChatStorage.sqlite` summary, chat-listing, and selected-chat import logic. It adapts to missing optional columns and returns source-neutral `Chat` and `ChatImport` models.
+- `sources::whatsapp_export_zip`: WhatsApp mobile export ZIP parsing, latest-message windowing for large transcripts, media classification, reference resolution, and bounded attachment payload lookup.
+- `whatsapp::chat_storage`: read-only `ChatStorage.sqlite` summary, chat-listing, chat-list search, selected-chat import, and selected-chat search logic. It adapts to missing optional columns and returns source-neutral `Chat` and `ChatImport` models. Chat-list summaries and chat-list search use bounded result sets and set-based aggregate queries, while selected-chat search returns bounded latest matches, so large backups do not require repeated unbounded scans or UI-sized message loads.
 
 The Tauri shell should call this core crate instead of reimplementing parser rules in frontend code.
 
@@ -184,7 +188,7 @@ Rules:
 
 `crates/whatsvault-proof` is a small command-line proof runner for the pre-UI phase.
 
-It checks configured backup roots, finds candidate backups, inspects `Manifest.db`, resolves `ChatStorage.sqlite` through the backup fileID mapping, and reports aggregate WhatsApp database counts when the physical SQLite file is readable. It intentionally reports only counts and booleans so the command is safe to paste into issues or development notes.
+It checks configured backup roots, finds candidate backups, inspects `Manifest.db`, resolves `ChatStorage.sqlite` through the backup fileID mapping, reads aggregate WhatsApp database counts, lists chats, and imports one real chat into the normalized app model when the physical SQLite file is readable. It intentionally reports only counts and booleans so the command is safe to paste into issues or development notes.
 
 Run it with default backup roots:
 
@@ -224,12 +228,11 @@ Committed fixtures must be synthetic and intentionally small.
 
 ## Current Proof Status
 
-Synthetic tests now cover iPhone backup discovery, default backup-root construction for macOS and Windows, metadata plist parsing, `Manifest.db` mapping, fileID physical resolution, aggregate `ChatStorage.sqlite` counts, chat listing, selected-chat import into the normalized app model, the desktop command boundary from backup folder to resolved `ChatStorage.sqlite`, backup media preview/export resolution from `Manifest.db` to hashed backup files, selected backup-chat HTML export through the shared exporter, and the React path that shows and opens backup chats through the shared timeline model. The desktop app can currently view WhatsApp export ZIPs and expose the iPhone-backup chat-list/import/media-preview/export UI path, but a real local MobileSync backup is still required before the iPhone-backup phase can be marked complete.
+Synthetic tests now cover iPhone backup discovery, selected-folder fallback discovery, default backup-root construction for macOS and Windows, metadata plist parsing, `Manifest.db` mapping, fileID physical resolution, aggregate `ChatStorage.sqlite` counts, chat listing, selected-chat import into the normalized app model, the desktop command boundary from backup folder to resolved `ChatStorage.sqlite`, backup media preview/export resolution from `Manifest.db` to hashed backup files, bounded internal selected backup-chat HTML export through the shared exporter, and the React path that shows and opens backup chats through the shared timeline model. A real local MobileSync backup has now proven `Manifest.db` discovery, physical `ChatStorage.sqlite` resolution, aggregate counts, safe chat-list extraction, normalized chat import through the proof CLI, desktop chat rendering, bounded media preview, and bounded HTML export from the packaged app.
 
 The next safe proof slice is:
 
-1. Create or provide a real local iPhone backup.
-2. Run discovery against the real backup root.
-3. Locate WhatsApp files from `Manifest.db`.
-4. Confirm the resolved physical `ChatStorage.sqlite` file exists.
-5. Read `ChatStorage.sqlite` and produce chat/message/media-item counts.
+1. Configure signed and notarized macOS release output.
+2. Configure Windows code signing and run live Windows package proof.
+3. Run the centralized signing readiness checker without printing secret values.
+4. Record only sanitized aggregate evidence; do not commit screenshots or exports from private chats.

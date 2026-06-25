@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -33,6 +34,13 @@ pub enum IphoneBackupError {
 }
 
 pub type Result<T> = std::result::Result<T, IphoneBackupError>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WhatsappManifestSummary {
+    pub has_chat_storage: bool,
+    pub has_contacts: bool,
+    pub media_file_count: usize,
+}
 
 pub fn default_backup_roots() -> Vec<PathBuf> {
     backup_roots_from_env(
@@ -77,22 +85,23 @@ where
             continue;
         }
 
-        let info_plist_path = optional_child_path(&path, "Info.plist");
-        let manifest_plist_path = optional_child_path(&path, "Manifest.plist");
-        let status_plist_path = optional_child_path(&path, "Status.plist");
-
-        candidates.push(BackupCandidate {
-            id: entry.file_name().to_string_lossy().into_owned(),
-            path: path_to_string(&path),
-            manifest_db_path: path_to_string(&manifest_db_path),
-            manifest_plist_path: manifest_plist_path.map(|path| path_to_string(&path)),
-            info_plist_path: info_plist_path.map(|path| path_to_string(&path)),
-            status_plist_path: status_plist_path.map(|path| path_to_string(&path)),
-        });
+        candidates.push(backup_candidate_from_directory(&path));
     }
 
     candidates.sort_by(|left, right| left.id.cmp(&right.id));
     Ok(candidates)
+}
+
+pub fn discover_backup_candidates_from_selected_path<P>(_path: P) -> Result<Vec<BackupCandidate>>
+where
+    P: AsRef<Path>,
+{
+    let path = _path.as_ref();
+    if path.join("Manifest.db").is_file() {
+        return Ok(vec![backup_candidate_from_directory(path)]);
+    }
+
+    discover_backup_candidates(path)
 }
 
 pub fn read_backup_metadata(candidate: &BackupCandidate) -> Result<BackupMetadata> {
@@ -139,6 +148,10 @@ where
     path
 }
 
+pub fn normalize_whatsapp_media_relative_path(path: &str) -> String {
+    normalize_manifest_relative_path(path)
+}
+
 pub fn resolve_whatsapp_media_file_path<P, Q>(
     backup_root: P,
     manifest_db_path: Q,
@@ -148,15 +161,54 @@ where
     P: AsRef<Path>,
     Q: AsRef<Path>,
 {
-    let Some(file) = find_whatsapp_manifest_file_by_relative_path(
-        manifest_db_path,
-        &normalize_manifest_relative_path(media_relative_path),
-    )?
-    else {
-        return Ok(None);
-    };
+    let normalized_relative_path = normalize_whatsapp_media_relative_path(media_relative_path);
+    let mut paths =
+        resolve_whatsapp_media_file_paths(backup_root, manifest_db_path, [media_relative_path])?;
 
-    Ok(Some(physical_backup_file_path(backup_root, &file.file_id)))
+    Ok(paths.remove(&normalized_relative_path))
+}
+
+pub fn resolve_whatsapp_media_file_paths<P, Q, I, S>(
+    backup_root: P,
+    manifest_db_path: Q,
+    media_relative_paths: I,
+) -> Result<HashMap<String, PathBuf>>
+where
+    P: AsRef<Path>,
+    Q: AsRef<Path>,
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let backup_root = backup_root.as_ref();
+    let connection = open_manifest_read_only(manifest_db_path)?;
+    let mut resolved_paths = HashMap::new();
+
+    for media_relative_path in media_relative_paths {
+        let normalized_relative_path =
+            normalize_whatsapp_media_relative_path(media_relative_path.as_ref());
+        if normalized_relative_path.is_empty()
+            || resolved_paths.contains_key(&normalized_relative_path)
+        {
+            continue;
+        }
+
+        let media_candidates =
+            whatsapp_media_manifest_relative_path_candidates(&normalized_relative_path);
+        for media_candidate in media_candidates {
+            if let Some(file) = find_whatsapp_manifest_file_by_relative_path_in_connection(
+                &connection,
+                &media_candidate,
+            )? {
+                resolved_paths.insert(
+                    normalized_relative_path.clone(),
+                    physical_backup_file_path(backup_root, &file.file_id),
+                );
+                break;
+            }
+        }
+    }
+
+    Ok(resolved_paths)
 }
 
 pub fn read_manifest_files<P>(_manifest_db_path: P) -> Result<Vec<ManifestFile>>
@@ -199,16 +251,26 @@ where
     let connection = open_manifest_read_only(_manifest_db_path)?;
     let normalized_relative_path = normalize_manifest_relative_path(relative_path);
 
+    find_whatsapp_manifest_file_by_relative_path_in_connection(
+        &connection,
+        &normalized_relative_path,
+    )
+}
+
+fn find_whatsapp_manifest_file_by_relative_path_in_connection(
+    connection: &Connection,
+    normalized_relative_path: &str,
+) -> Result<Option<ManifestFile>> {
     Ok(connection
         .query_row(
             r#"
             SELECT fileID, domain, relativePath, flags
             FROM Files
             WHERE domain = ?1
-              AND relativePath = ?2
+              AND TRIM(REPLACE(COALESCE(relativePath, ''), char(92), '/'), '/') = ?2
             LIMIT 1
             "#,
-            [WHATSAPP_SHARED_DOMAIN, normalized_relative_path.as_str()],
+            [WHATSAPP_SHARED_DOMAIN, normalized_relative_path],
             |row| {
                 Ok(ManifestFile {
                     file_id: row.get(0)?,
@@ -219,6 +281,55 @@ where
             },
         )
         .optional()?)
+}
+
+pub fn summarize_whatsapp_manifest_files<P>(_manifest_db_path: P) -> Result<WhatsappManifestSummary>
+where
+    P: AsRef<Path>,
+{
+    let connection = open_manifest_read_only(_manifest_db_path)?;
+
+    connection
+        .query_row(
+            r#"
+            WITH whatsapp_files AS (
+                SELECT TRIM(REPLACE(COALESCE(relativePath, ''), char(92), '/'), '/') AS relative_path
+                FROM Files
+                WHERE domain = ?1
+            )
+            SELECT
+                COALESCE(MAX(CASE WHEN relative_path = ?2 THEN 1 ELSE 0 END), 0) AS has_chat_storage,
+                COALESCE(MAX(CASE WHEN relative_path = ?3 THEN 1 ELSE 0 END), 0) AS has_contacts,
+                COALESCE(SUM(
+                    CASE
+                        WHEN relative_path LIKE 'Message/%'
+                          OR relative_path LIKE 'Media/%'
+                          OR relative_path LIKE 'stickers/%'
+                        THEN 1
+                        ELSE 0
+                    END
+                ), 0) AS media_file_count
+            FROM whatsapp_files
+            "#,
+            (
+                WHATSAPP_SHARED_DOMAIN,
+                CHAT_STORAGE_RELATIVE_PATH,
+                CONTACTS_RELATIVE_PATH,
+            ),
+            |row| {
+                let has_chat_storage = row.get::<_, i64>(0)? > 0;
+                let has_contacts = row.get::<_, i64>(1)? > 0;
+                let media_file_count = row.get::<_, i64>(2)?;
+
+                Ok(WhatsappManifestSummary {
+                    has_chat_storage,
+                    has_contacts,
+                    media_file_count: usize::try_from(media_file_count.max(0))
+                        .unwrap_or(usize::MAX),
+                })
+            },
+        )
+        .map_err(IphoneBackupError::from)
 }
 
 pub fn find_whatsapp_manifest_files<P>(_manifest_db_path: P) -> Result<WhatsappManifestFiles>
@@ -277,6 +388,26 @@ fn optional_child_path(parent: &Path, child: &str) -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
+fn backup_candidate_from_directory(path: &Path) -> BackupCandidate {
+    let manifest_db_path = path.join("Manifest.db");
+    let info_plist_path = optional_child_path(path, "Info.plist");
+    let manifest_plist_path = optional_child_path(path, "Manifest.plist");
+    let status_plist_path = optional_child_path(path, "Status.plist");
+    let id = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "selected-backup".to_owned());
+
+    BackupCandidate {
+        id,
+        path: path_to_string(path),
+        manifest_db_path: path_to_string(&manifest_db_path),
+        manifest_plist_path: manifest_plist_path.map(|path| path_to_string(&path)),
+        info_plist_path: info_plist_path.map(|path| path_to_string(&path)),
+        status_plist_path: status_plist_path.map(|path| path_to_string(&path)),
+    }
+}
+
 fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
@@ -285,6 +416,20 @@ fn normalize_manifest_relative_path(path: &str) -> String {
     let normalized = path.replace('\\', "/");
 
     normalized.trim().trim_start_matches('/').to_owned()
+}
+
+fn whatsapp_media_manifest_relative_path_candidates(path: &str) -> Vec<String> {
+    let normalized = normalize_manifest_relative_path(path);
+    if normalized.is_empty() {
+        return Vec::new();
+    }
+
+    let mut candidates = vec![normalized.clone()];
+    if !normalized.starts_with("Message/") && normalized.contains('/') {
+        candidates.push(format!("Message/{normalized}"));
+    }
+
+    candidates
 }
 
 fn plist_string(root: &plist::Value, key: &str) -> Option<String> {

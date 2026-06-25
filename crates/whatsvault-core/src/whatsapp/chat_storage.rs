@@ -1,16 +1,24 @@
-use std::{collections::HashSet, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 
-use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
+use rusqlite::{params, params_from_iter, Connection, OpenFlags, OptionalExtension};
 use thiserror::Error;
 
 use crate::{
-    media::attachment_kind_from_mime_or_filename, Attachment, Chat, ChatImport, ChatStorageSummary,
-    Message, MessageTimestamp, SourceKind,
+    media::{attachment_display_label, attachment_kind_from_mime_or_filename},
+    Attachment, Chat, ChatImport, ChatStorageSummary, ImportIssue, ImportIssueCode, Message,
+    MessageTimestamp, SourceKind,
 };
 
 const MESSAGE_TABLE: &str = "ZWAMESSAGE";
 const CHAT_TABLE: &str = "ZWACHATSESSION";
 const MEDIA_ITEM_TABLE: &str = "ZWAMEDIAITEM";
+const GROUP_MEMBER_TABLE: &str = "ZWAGROUPMEMBER";
+const PROFILE_PUSH_NAME_TABLE: &str = "ZWAPROFILEPUSHNAME";
+const SEARCHABLE_CHAT_LIST_FIELD_COUNT: usize = 1;
+const SEARCHABLE_CHAT_MESSAGE_FIELD_COUNT: usize = 7;
 
 #[derive(Debug, Error)]
 pub enum ChatStorageError {
@@ -37,6 +45,43 @@ pub fn list_chat_storage_chats<P>(path: P) -> Result<Vec<Chat>>
 where
     P: AsRef<Path>,
 {
+    list_chat_storage_chats_with_limit(path, None)
+}
+
+pub fn list_chat_storage_chats_limited<P>(path: P, limit: usize) -> Result<Vec<Chat>>
+where
+    P: AsRef<Path>,
+{
+    list_chat_storage_chats_with_limit(path, Some(limit))
+}
+
+pub fn search_chat_storage_chats_limited<P>(path: P, query: &str, limit: usize) -> Result<Vec<Chat>>
+where
+    P: AsRef<Path>,
+{
+    let search_tokens = search_tokens(query);
+    if search_tokens.is_empty() || limit == 0 {
+        return Ok(Vec::new());
+    }
+
+    list_chat_storage_chats_matching(path, Some(limit), &search_tokens)
+}
+
+fn list_chat_storage_chats_with_limit<P>(path: P, limit: Option<usize>) -> Result<Vec<Chat>>
+where
+    P: AsRef<Path>,
+{
+    list_chat_storage_chats_matching(path, limit, &[])
+}
+
+fn list_chat_storage_chats_matching<P>(
+    path: P,
+    limit: Option<usize>,
+    search_tokens: &[String],
+) -> Result<Vec<Chat>>
+where
+    P: AsRef<Path>,
+{
     let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let Some(chat_schema) = table_schema(&connection, CHAT_TABLE)? else {
         return Ok(Vec::new());
@@ -44,45 +89,36 @@ where
     if !chat_schema.has("Z_PK") {
         return Ok(Vec::new());
     }
+    if limit == Some(0) {
+        return Ok(Vec::new());
+    }
 
     let message_schema = table_schema(&connection, MESSAGE_TABLE)?;
     let media_schema = table_schema(&connection, MEDIA_ITEM_TABLE)?;
-    let title_expr = coalesced_text_expr(
-        "c",
+    let query = chat_list_query(
         &chat_schema,
-        &["ZPARTNERNAME", "ZCONTACTJID"],
-        "'Imported chat'",
+        message_schema.as_ref(),
+        media_schema.as_ref(),
+        limit,
+        search_tokens.len(),
     );
-    let last_date_expr = chat_last_date_expr(&chat_schema, message_schema.as_ref());
-    let latest_message_expr = latest_message_expr(message_schema.as_ref(), media_schema.as_ref());
-    let message_count_expr = chat_message_count_expr(&chat_schema, message_schema.as_ref());
-    let attachment_count_expr =
-        chat_attachment_count_expr(message_schema.as_ref(), media_schema.as_ref());
-
-    let query = format!(
-        r#"
-        SELECT
-            CAST(c.Z_PK AS TEXT) AS id,
-            {title_expr} AS title,
-            {latest_message_expr} AS latest_message,
-            {last_timestamp_expr} AS latest_message_timestamp,
-            COALESCE({message_count_expr}, 0) AS message_count,
-            COALESCE({attachment_count_expr}, 0) AS attachment_count,
-            COALESCE({last_date_expr}, 0) AS sort_date
-        FROM {CHAT_TABLE} c
-        ORDER BY sort_date DESC, c.Z_PK DESC
-        "#,
-        last_timestamp_expr = cocoa_timestamp_expr(&last_date_expr),
-    );
+    let mut query_params = Vec::new();
+    for token in search_tokens {
+        let pattern = like_contains_pattern(token);
+        for _ in 0..SEARCHABLE_CHAT_LIST_FIELD_COUNT {
+            query_params.push(pattern.clone());
+        }
+    }
     let mut statement = connection.prepare(&query)?;
-    let rows = statement.query_map([], |row| {
+    let rows = statement.query_map(params_from_iter(query_params.iter()), |row| {
         let latest_timestamp = row
             .get::<_, Option<String>>(3)?
             .map(|raw| MessageTimestamp { raw });
+        let raw_title = row.get::<_, String>(1)?;
 
         Ok(Chat {
             id: row.get(0)?,
-            title: row.get::<_, String>(1)?,
+            title: display_chat_title(&raw_title),
             latest_message: row.get(2)?,
             latest_message_timestamp: latest_timestamp,
             message_count: nonnegative_i64_to_u64(row.get::<_, i64>(4)?),
@@ -94,11 +130,76 @@ where
     for row in rows {
         chats.push(row?);
     }
+    hydrate_latest_message_previews(
+        &connection,
+        message_schema.as_ref(),
+        media_schema.as_ref(),
+        &mut chats,
+    )?;
 
     Ok(chats)
 }
 
 pub fn import_chat_storage_chat<P>(path: P, chat_id: &str) -> Result<ChatImport>
+where
+    P: AsRef<Path>,
+{
+    import_chat_storage_chat_with_message_limit(path, chat_id, None)
+}
+
+pub fn import_chat_storage_chat_recent<P>(
+    path: P,
+    chat_id: &str,
+    message_limit: usize,
+) -> Result<ChatImport>
+where
+    P: AsRef<Path>,
+{
+    import_chat_storage_chat_with_message_limit(path, chat_id, Some(message_limit))
+}
+
+pub fn search_chat_storage_chat_recent<P>(
+    path: P,
+    chat_id: &str,
+    query: &str,
+    limit: usize,
+) -> Result<ChatImport>
+where
+    P: AsRef<Path>,
+{
+    search_chat_storage_chat_with_limit(path, chat_id, query, limit)
+}
+
+pub fn count_chat_storage_chat_messages<P>(path: P, chat_id: &str) -> Result<u64>
+where
+    P: AsRef<Path>,
+{
+    let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let Some(message_schema) = table_schema(&connection, MESSAGE_TABLE)? else {
+        return Ok(0);
+    };
+    if !message_schema.has("ZCHATSESSION") {
+        return Ok(0);
+    }
+
+    let count = connection.query_row(
+        r#"
+        SELECT COUNT(*)
+        FROM ZWAMESSAGE
+        WHERE ZCHATSESSION = ?1
+        "#,
+        params![chat_id],
+        |row| row.get::<_, i64>(0),
+    )?;
+
+    Ok(nonnegative_i64_to_u64(count))
+}
+
+fn import_chat_storage_chat_with_message_limit<P>(
+    path: P,
+    chat_id: &str,
+    message_limit: Option<usize>,
+) -> Result<ChatImport>
 where
     P: AsRef<Path>,
 {
@@ -110,12 +211,25 @@ where
     if !message_schema.has("Z_PK") || !message_schema.has("ZCHATSESSION") {
         return Ok(empty_chat_import(title));
     }
+    if message_limit == Some(0) {
+        return Ok(empty_chat_import(title));
+    }
 
     let media_schema = table_schema(&connection, MEDIA_ITEM_TABLE)?;
+    let group_member_schema = table_schema(&connection, GROUP_MEMBER_TABLE)?;
+    let profile_push_name_schema = table_schema(&connection, PROFILE_PUSH_NAME_TABLE)?;
     let media_join = media_join_expr(&message_schema, media_schema.as_ref());
+    let group_member_join = group_member_join_expr(&message_schema, group_member_schema.as_ref());
+    let profile_push_name_join = profile_push_name_join_expr(
+        &message_schema,
+        group_member_schema.as_ref(),
+        profile_push_name_schema.as_ref(),
+    );
     let message_text_expr = nullable_text_expr("m", &message_schema, "ZTEXT");
     let from_jid_expr = nullable_text_expr("m", &message_schema, "ZFROMJID");
     let push_name_expr = nullable_text_expr("m", &message_schema, "ZPUSHNAME");
+    let group_member_name_expr = group_member_name_expr(group_member_schema.as_ref());
+    let profile_push_name_expr = profile_push_name_expr(profile_push_name_schema.as_ref());
     let message_date_expr = nullable_number_expr("m", &message_schema, "ZMESSAGEDATE");
     let is_from_me_expr = nullable_number_expr("m", &message_schema, "ZISFROMME");
     let media_pk_expr = media_column_expr(media_schema.as_ref(), "Z_PK");
@@ -132,6 +246,8 @@ where
             {message_timestamp_expr} AS message_timestamp,
             {is_from_me_expr} AS is_from_me,
             {message_text_expr} AS message_text,
+            {group_member_name_expr} AS group_member_name,
+            {profile_push_name_expr} AS profile_push_name,
             {from_jid_expr} AS from_jid,
             {push_name_expr} AS push_name,
             {media_pk_expr} AS media_pk,
@@ -141,34 +257,177 @@ where
             {media_size_expr} AS media_size
         FROM {MESSAGE_TABLE} m
         {media_join}
-        WHERE m.ZCHATSESSION = ?1
+        {group_member_join}
+        {profile_push_name_join}
+        WHERE {message_filter_expr}
         ORDER BY {order_expr}, m.Z_PK
         "#,
         message_timestamp_expr = cocoa_timestamp_expr(&message_date_expr),
+        message_filter_expr = chat_message_filter_expr(&message_schema, message_limit),
     );
     let mut statement = connection.prepare(&query)?;
-    let rows = statement.query_map(params![chat_id], |row| {
-        Ok(ChatStorageMessageRow {
-            message_pk: row.get(0)?,
-            timestamp: row.get(1)?,
-            is_from_me: row.get(2)?,
-            message_text: row.get(3)?,
-            from_jid: row.get(4)?,
-            push_name: row.get(5)?,
-            media_pk: row.get(6)?,
-            media_path: row.get(7)?,
-            media_type: row.get(8)?,
-            media_title: row.get(9)?,
-            media_size: row.get(10)?,
-        })
-    })?;
+    let rows = statement.query_map(params![chat_id], chat_storage_message_row_from_sql)?;
+    let mut message_rows = Vec::new();
+    for row in rows {
+        message_rows.push(row?);
+    }
 
+    Ok(chat_import_from_message_rows(
+        title,
+        message_rows,
+        Vec::new(),
+    ))
+}
+
+fn search_chat_storage_chat_with_limit<P>(
+    path: P,
+    chat_id: &str,
+    query: &str,
+    limit: usize,
+) -> Result<ChatImport>
+where
+    P: AsRef<Path>,
+{
+    let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let title = chat_title(&connection, chat_id)?;
+    let search_tokens = search_tokens(query);
+    if search_tokens.is_empty() || limit == 0 {
+        return Ok(empty_chat_import(title));
+    }
+
+    let Some(message_schema) = table_schema(&connection, MESSAGE_TABLE)? else {
+        return Ok(empty_chat_import(title));
+    };
+    if !message_schema.has("Z_PK") || !message_schema.has("ZCHATSESSION") {
+        return Ok(empty_chat_import(title));
+    }
+
+    let media_schema = table_schema(&connection, MEDIA_ITEM_TABLE)?;
+    let group_member_schema = table_schema(&connection, GROUP_MEMBER_TABLE)?;
+    let profile_push_name_schema = table_schema(&connection, PROFILE_PUSH_NAME_TABLE)?;
+    let media_join = media_join_expr(&message_schema, media_schema.as_ref());
+    let group_member_join = group_member_join_expr(&message_schema, group_member_schema.as_ref());
+    let profile_push_name_join = profile_push_name_join_expr(
+        &message_schema,
+        group_member_schema.as_ref(),
+        profile_push_name_schema.as_ref(),
+    );
+    let message_text_expr = nullable_text_expr("m", &message_schema, "ZTEXT");
+    let from_jid_expr = nullable_text_expr("m", &message_schema, "ZFROMJID");
+    let push_name_expr = nullable_text_expr("m", &message_schema, "ZPUSHNAME");
+    let group_member_name_expr = group_member_name_expr(group_member_schema.as_ref());
+    let profile_push_name_expr = profile_push_name_expr(profile_push_name_schema.as_ref());
+    let message_date_expr = nullable_number_expr("m", &message_schema, "ZMESSAGEDATE");
+    let is_from_me_expr = nullable_number_expr("m", &message_schema, "ZISFROMME");
+    let media_pk_expr = media_column_expr(media_schema.as_ref(), "Z_PK");
+    let media_path_expr = media_text_column_expr(media_schema.as_ref(), "ZMEDIALOCALPATH");
+    let media_type_expr = media_text_column_expr(media_schema.as_ref(), "ZVCARDSTRING");
+    let media_title_expr = media_text_column_expr(media_schema.as_ref(), "ZTITLE");
+    let media_size_expr = media_column_expr(media_schema.as_ref(), "ZFILESIZE");
+    let order_expr = message_order_expr(&message_schema);
+    let search_expr = chat_search_filter_expr(
+        &[
+            message_text_expr.as_str(),
+            group_member_name_expr.as_str(),
+            profile_push_name_expr.as_str(),
+            push_name_expr.as_str(),
+            from_jid_expr.as_str(),
+            media_path_expr.as_str(),
+            media_title_expr.as_str(),
+        ],
+        search_tokens.len(),
+    );
+    let bounded_limit = limit.saturating_add(1);
+    let query = format!(
+        r#"
+        SELECT
+            m.Z_PK AS message_pk,
+            {message_timestamp_expr} AS message_timestamp,
+            {is_from_me_expr} AS is_from_me,
+            {message_text_expr} AS message_text,
+            {group_member_name_expr} AS group_member_name,
+            {profile_push_name_expr} AS profile_push_name,
+            {from_jid_expr} AS from_jid,
+            {push_name_expr} AS push_name,
+            {media_pk_expr} AS media_pk,
+            {media_path_expr} AS media_path,
+            {media_type_expr} AS media_type,
+            {media_title_expr} AS media_title,
+            {media_size_expr} AS media_size
+        FROM {MESSAGE_TABLE} m
+        {media_join}
+        {group_member_join}
+        {profile_push_name_join}
+        WHERE m.ZCHATSESSION = ?
+          AND {search_expr}
+        ORDER BY {order_expr} DESC, m.Z_PK DESC
+        LIMIT {bounded_limit}
+        "#,
+        message_timestamp_expr = cocoa_timestamp_expr(&message_date_expr),
+    );
+    let mut query_params = vec![chat_id.to_owned()];
+    for token in &search_tokens {
+        let pattern = like_contains_pattern(token);
+        for _ in 0..SEARCHABLE_CHAT_MESSAGE_FIELD_COUNT {
+            query_params.push(pattern.clone());
+        }
+    }
+    let mut statement = connection.prepare(&query)?;
+    let rows = statement.query_map(params_from_iter(query_params.iter()), |row| {
+        chat_storage_message_row_from_sql(row)
+    })?;
+    let mut message_rows = Vec::new();
+    for row in rows {
+        message_rows.push(row?);
+    }
+
+    let is_truncated = message_rows.len() > limit;
+    if is_truncated {
+        message_rows.truncate(limit);
+    }
+    message_rows.reverse();
+    let issues = if is_truncated {
+        vec![ImportIssue {
+            code: ImportIssueCode::SearchResultsTruncated,
+            message: format!("Only the latest {limit} matching messages were loaded"),
+        }]
+    } else {
+        Vec::new()
+    };
+
+    Ok(chat_import_from_message_rows(title, message_rows, issues))
+}
+
+fn chat_storage_message_row_from_sql(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<ChatStorageMessageRow> {
+    Ok(ChatStorageMessageRow {
+        message_pk: row.get(0)?,
+        timestamp: row.get(1)?,
+        is_from_me: row.get(2)?,
+        message_text: row.get(3)?,
+        group_member_name: row.get(4)?,
+        profile_push_name: row.get(5)?,
+        from_jid: row.get(6)?,
+        push_name: row.get(7)?,
+        media_pk: row.get(8)?,
+        media_path: row.get(9)?,
+        media_type: row.get(10)?,
+        media_title: row.get(11)?,
+        media_size: row.get(12)?,
+    })
+}
+
+fn chat_import_from_message_rows(
+    title: String,
+    rows: Vec<ChatStorageMessageRow>,
+    issues: Vec<ImportIssue>,
+) -> ChatImport {
     let mut messages = Vec::new();
     let mut attachments = Vec::new();
     let mut seen_attachment_ids = HashSet::new();
 
     for row in rows {
-        let row = row?;
         let attachment = row.attachment();
         let attachment_ids = attachment
             .as_ref()
@@ -197,13 +456,13 @@ where
         });
     }
 
-    Ok(ChatImport {
+    ChatImport {
         source_kind: SourceKind::IphoneBackup,
         transcript_name: Some(title),
         messages,
         attachments,
-        issues: Vec::new(),
-    })
+        issues,
+    }
 }
 
 fn count_table_if_present(connection: &Connection, table_name: &str) -> Result<Option<u64>> {
@@ -269,6 +528,8 @@ struct ChatStorageMessageRow {
     timestamp: Option<String>,
     is_from_me: Option<i64>,
     message_text: Option<String>,
+    group_member_name: Option<String>,
+    profile_push_name: Option<String>,
     from_jid: Option<String>,
     push_name: Option<String>,
     media_pk: Option<i64>,
@@ -284,18 +545,37 @@ impl ChatStorageMessageRow {
             return Some("You".to_owned());
         }
 
-        first_nonempty([self.push_name.as_deref(), self.from_jid.as_deref()])
+        first_readable_sender([
+            self.group_member_name.as_deref(),
+            self.profile_push_name.as_deref(),
+            self.push_name.as_deref(),
+            self.from_jid.as_deref(),
+        ])
+        .or_else(|| Some("Participant".to_owned()))
     }
 
     fn body(&self) -> String {
-        let media_filename = self.media_path.as_deref().map(filename_from_media_path);
+        if let Some(message_text) = first_display_message_text([self.message_text.as_deref()]) {
+            return message_text;
+        }
 
-        first_nonempty([
-            self.message_text.as_deref(),
-            self.media_title.as_deref(),
-            media_filename.as_deref(),
-        ])
-        .unwrap_or_default()
+        self.media_label().unwrap_or_default()
+    }
+
+    fn media_label(&self) -> Option<String> {
+        let archive_path =
+            first_nonempty([self.media_path.as_deref(), self.media_title.as_deref()]);
+        if self.media_pk.is_none() && archive_path.is_none() {
+            return None;
+        }
+
+        let filename = archive_path
+            .as_deref()
+            .map(filename_from_media_path)
+            .unwrap_or_default();
+        let kind = attachment_kind_from_mime_or_filename(self.media_type.as_deref(), &filename);
+
+        Some(attachment_display_label(kind).to_owned())
     }
 
     fn attachment(&self) -> Option<Attachment> {
@@ -316,6 +596,120 @@ impl ChatStorageMessageRow {
                 .unwrap_or_default(),
         })
     }
+}
+
+#[derive(Debug, Clone)]
+struct LatestMessagePreviewRow {
+    chat_id: String,
+    message_text: Option<String>,
+    media_pk: Option<i64>,
+    media_path: Option<String>,
+    media_type: Option<String>,
+    media_title: Option<String>,
+}
+
+impl LatestMessagePreviewRow {
+    fn body(&self) -> Option<String> {
+        if let Some(message_text) = first_display_message_text([self.message_text.as_deref()]) {
+            return Some(message_text);
+        }
+
+        let archive_path =
+            first_nonempty([self.media_path.as_deref(), self.media_title.as_deref()]);
+        if self.media_pk.is_none() && archive_path.is_none() {
+            return None;
+        }
+
+        let filename = archive_path
+            .as_deref()
+            .map(filename_from_media_path)
+            .unwrap_or_default();
+        let kind = attachment_kind_from_mime_or_filename(self.media_type.as_deref(), &filename);
+
+        Some(attachment_display_label(kind).to_owned())
+    }
+}
+
+fn hydrate_latest_message_previews(
+    connection: &Connection,
+    message_schema: Option<&TableSchema>,
+    media_schema: Option<&TableSchema>,
+    chats: &mut [Chat],
+) -> Result<()> {
+    let Some(message_schema) = message_schema else {
+        return Ok(());
+    };
+    if chats.is_empty() || !message_schema.has("Z_PK") || !message_schema.has("ZCHATSESSION") {
+        return Ok(());
+    }
+
+    let placeholders = (1..=chats.len())
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let media_join = media_join_expr(message_schema, media_schema);
+    let message_text_expr = nullable_text_expr("m", message_schema, "ZTEXT");
+    let media_pk_expr = media_column_expr(media_schema, "Z_PK");
+    let media_path_expr = media_text_column_expr(media_schema, "ZMEDIALOCALPATH");
+    let media_type_expr = media_text_column_expr(media_schema, "ZVCARDSTRING");
+    let media_title_expr = media_text_column_expr(media_schema, "ZTITLE");
+    let order_expr = message_order_expr(message_schema);
+    let query = format!(
+        r#"
+        SELECT
+            CAST(chat_id AS TEXT) AS chat_id,
+            message_text,
+            media_pk,
+            media_path,
+            media_type,
+            media_title
+        FROM (
+            SELECT
+                m.ZCHATSESSION AS chat_id,
+                {message_text_expr} AS message_text,
+                {media_pk_expr} AS media_pk,
+                {media_path_expr} AS media_path,
+                {media_type_expr} AS media_type,
+                {media_title_expr} AS media_title,
+                ROW_NUMBER() OVER (
+                    PARTITION BY m.ZCHATSESSION
+                    ORDER BY {order_expr} DESC, m.Z_PK DESC
+                ) AS row_number
+            FROM {MESSAGE_TABLE} m
+            {media_join}
+            WHERE m.ZCHATSESSION IN ({placeholders})
+        )
+        WHERE row_number = 1
+        "#
+    );
+    let chat_ids = chats
+        .iter()
+        .map(|chat| chat.id.as_str())
+        .collect::<Vec<_>>();
+    let mut statement = connection.prepare(&query)?;
+    let rows = statement.query_map(params_from_iter(chat_ids), |row| {
+        Ok(LatestMessagePreviewRow {
+            chat_id: row.get(0)?,
+            message_text: row.get(1)?,
+            media_pk: row.get(2)?,
+            media_path: row.get(3)?,
+            media_type: row.get(4)?,
+            media_title: row.get(5)?,
+        })
+    })?;
+    let mut previews = HashMap::new();
+    for row in rows {
+        let row = row?;
+        previews.insert(row.chat_id.clone(), row.body());
+    }
+
+    for chat in chats {
+        if let Some(preview) = previews.remove(&chat.id).flatten() {
+            chat.latest_message = Some(preview);
+        }
+    }
+
+    Ok(())
 }
 
 fn chat_title(connection: &Connection, chat_id: &str) -> Result<String> {
@@ -341,10 +735,11 @@ fn chat_title(connection: &Connection, chat_id: &str) -> Result<String> {
         "#
     );
 
-    Ok(connection
+    let raw_title = connection
         .query_row(&query, params![chat_id], |row| row.get::<_, String>(0))
         .optional()?
-        .unwrap_or_else(|| format!("Chat {chat_id}")))
+        .unwrap_or_else(|| format!("Chat {chat_id}"));
+    Ok(display_chat_title(&raw_title))
 }
 
 fn empty_chat_import(title: String) -> ChatImport {
@@ -357,112 +752,168 @@ fn empty_chat_import(title: String) -> ChatImport {
     }
 }
 
-fn chat_last_date_expr(chat_schema: &TableSchema, message_schema: Option<&TableSchema>) -> String {
-    if chat_schema.has("ZLASTMESSAGEDATE") {
-        return "c.ZLASTMESSAGEDATE".to_owned();
-    }
-
-    if message_schema.is_some_and(|schema| schema.has("ZCHATSESSION") && schema.has("ZMESSAGEDATE"))
-    {
-        return format!(
-            "(SELECT MAX(m.ZMESSAGEDATE) FROM {MESSAGE_TABLE} m WHERE m.ZCHATSESSION = c.Z_PK)"
-        );
-    }
-
-    "NULL".to_owned()
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ChatListQueryParts {
+    with_clause: String,
+    joins: String,
+    latest_date_expr: String,
+    message_count_expr: String,
+    attachment_count_expr: String,
+    sort_date_expr: String,
 }
 
-fn latest_message_expr(
+fn chat_list_query(
+    chat_schema: &TableSchema,
     message_schema: Option<&TableSchema>,
     media_schema: Option<&TableSchema>,
+    limit: Option<usize>,
+    search_token_count: usize,
 ) -> String {
-    let Some(message_schema) = message_schema else {
-        return "NULL".to_owned();
+    let title_expr = coalesced_text_expr(
+        "c",
+        chat_schema,
+        &["ZPARTNERNAME", "ZCONTACTJID"],
+        "'Imported chat'",
+    );
+    let parts = chat_list_query_parts(chat_schema, message_schema, media_schema);
+    let where_clause = if search_token_count == 0 {
+        String::new()
+    } else {
+        format!(
+            "WHERE {}",
+            chat_search_filter_expr(&[title_expr.as_str()], search_token_count)
+        )
     };
-    if !message_schema.has("ZCHATSESSION") || !message_schema.has("Z_PK") {
-        return "NULL".to_owned();
-    }
-
-    let message_text_expr = nullable_text_expr("m", message_schema, "ZTEXT");
-    let media_join = media_join_expr(message_schema, media_schema);
-    let media_title_expr = media_text_column_expr(media_schema, "ZTITLE");
-    let media_path_expr = media_text_column_expr(media_schema, "ZMEDIALOCALPATH");
-    let order_expr = message_order_expr(message_schema);
 
     format!(
         r#"
-        (
-            SELECT COALESCE(
-                {message_text_expr},
-                {media_title_expr},
-                {media_path_expr}
-            )
-            FROM {MESSAGE_TABLE} m
-            {media_join}
-            WHERE m.ZCHATSESSION = c.Z_PK
-            ORDER BY {order_expr} DESC, m.Z_PK DESC
-            LIMIT 1
-        )
-        "#
+        {with_clause}
+        SELECT
+            CAST(c.Z_PK AS TEXT) AS id,
+            {title_expr} AS title,
+            NULL AS latest_message,
+            {last_timestamp_expr} AS latest_message_timestamp,
+            COALESCE({message_count_expr}, 0) AS message_count,
+            COALESCE({attachment_count_expr}, 0) AS attachment_count,
+            {sort_date_expr} AS sort_date
+        FROM {CHAT_TABLE} c
+        {joins}
+        {where_clause}
+        ORDER BY sort_date DESC, c.Z_PK DESC
+        {limit_clause}
+        "#,
+        with_clause = parts.with_clause,
+        joins = parts.joins,
+        where_clause = where_clause,
+        last_timestamp_expr = cocoa_timestamp_expr(&parts.latest_date_expr),
+        message_count_expr = parts.message_count_expr,
+        attachment_count_expr = parts.attachment_count_expr,
+        sort_date_expr = parts.sort_date_expr,
+        limit_clause = sql_limit_clause(limit),
     )
 }
 
-fn chat_message_count_expr(
+fn chat_list_query_parts(
     chat_schema: &TableSchema,
     message_schema: Option<&TableSchema>,
-) -> String {
-    if chat_schema.has("ZMESSAGECOUNTER") {
-        return "c.ZMESSAGECOUNTER".to_owned();
+    media_schema: Option<&TableSchema>,
+) -> ChatListQueryParts {
+    let mut ctes = Vec::new();
+    let mut joins = Vec::new();
+    let mut latest_date_expr = if chat_schema.has("ZLASTMESSAGEDATE") {
+        "c.ZLASTMESSAGEDATE".to_owned()
+    } else {
+        "NULL".to_owned()
+    };
+    let mut message_count_expr = if chat_schema.has("ZMESSAGECOUNTER") {
+        "c.ZMESSAGECOUNTER".to_owned()
+    } else {
+        "0".to_owned()
+    };
+    let mut attachment_count_expr = "0".to_owned();
+
+    if let Some(message_schema) = message_schema.filter(|schema| schema.has("ZCHATSESSION")) {
+        let latest_message_date_expr = if message_schema.has("ZMESSAGEDATE") {
+            "MAX(m.ZMESSAGEDATE)".to_owned()
+        } else {
+            "NULL".to_owned()
+        };
+        ctes.push(format!(
+            r#"
+            message_summary AS (
+                SELECT
+                    m.ZCHATSESSION AS chat_id,
+                    COUNT(*) AS message_count,
+                    {latest_message_date_expr} AS latest_message_date
+                FROM {MESSAGE_TABLE} m
+                GROUP BY m.ZCHATSESSION
+            )
+            "#
+        ));
+        joins.push("LEFT JOIN message_summary ms ON ms.chat_id = c.Z_PK".to_owned());
+        message_count_expr = "ms.message_count".to_owned();
+        if message_schema.has("ZMESSAGEDATE") {
+            latest_date_expr = "ms.latest_message_date".to_owned();
+        }
+
+        if let Some(attachment_summary_cte) =
+            chat_attachment_summary_cte(message_schema, media_schema)
+        {
+            ctes.push(attachment_summary_cte);
+            joins.push("LEFT JOIN attachment_summary ats ON ats.chat_id = c.Z_PK".to_owned());
+            attachment_count_expr = "ats.attachment_count".to_owned();
+        }
     }
 
-    if message_schema.is_some_and(|schema| schema.has("ZCHATSESSION")) {
-        return format!("(SELECT COUNT(*) FROM {MESSAGE_TABLE} m WHERE m.ZCHATSESSION = c.Z_PK)");
+    ChatListQueryParts {
+        with_clause: sql_with_clause(ctes),
+        joins: joins.join("\n"),
+        sort_date_expr: format!("COALESCE({latest_date_expr}, 0)"),
+        latest_date_expr,
+        message_count_expr,
+        attachment_count_expr,
     }
-
-    "0".to_owned()
 }
 
-fn chat_attachment_count_expr(
-    message_schema: Option<&TableSchema>,
+fn chat_attachment_summary_cte(
+    message_schema: &TableSchema,
     media_schema: Option<&TableSchema>,
-) -> String {
-    let Some(message_schema) = message_schema else {
-        return "0".to_owned();
-    };
-    let Some(media_schema) = media_schema else {
-        return "0".to_owned();
-    };
+) -> Option<String> {
+    let media_schema = media_schema?;
     if !message_schema.has("Z_PK") || !message_schema.has("ZCHATSESSION") {
-        return "0".to_owned();
+        return None;
     }
 
-    if media_schema.has("ZMESSAGE") {
-        return format!(
-            r#"
-            (
-                SELECT COUNT(*)
-                FROM {MEDIA_ITEM_TABLE} mi
-                JOIN {MESSAGE_TABLE} m ON mi.ZMESSAGE = m.Z_PK
-                WHERE m.ZCHATSESSION = c.Z_PK
-            )
-            "#
-        );
-    }
+    let join_condition = media_join_condition(message_schema, media_schema)?;
+    let importable_predicate = media_importable_predicate(media_schema)?;
 
-    if message_schema.has("ZMEDIAITEM") && media_schema.has("Z_PK") {
-        return format!(
-            r#"
-            (
-                SELECT COUNT(*)
+    Some(format!(
+        r#"
+            attachment_summary AS (
+                SELECT
+                    m.ZCHATSESSION AS chat_id,
+                    COUNT(*) AS attachment_count
                 FROM {MESSAGE_TABLE} m
-                JOIN {MEDIA_ITEM_TABLE} mi ON m.ZMEDIAITEM = mi.Z_PK
-                WHERE m.ZCHATSESSION = c.Z_PK
+                JOIN {MEDIA_ITEM_TABLE} mi ON {join_condition}
+                WHERE {importable_predicate}
+                GROUP BY m.ZCHATSESSION
             )
             "#
-        );
-    }
+    ))
+}
 
-    "0".to_owned()
+fn sql_with_clause(ctes: Vec<String>) -> String {
+    if ctes.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "WITH {}",
+            ctes.into_iter()
+                .map(|cte| cte.trim().to_owned())
+                .collect::<Vec<_>>()
+                .join(",\n")
+        )
+    }
 }
 
 fn media_join_expr(message_schema: &TableSchema, media_schema: Option<&TableSchema>) -> String {
@@ -470,29 +921,170 @@ fn media_join_expr(message_schema: &TableSchema, media_schema: Option<&TableSche
         return String::new();
     };
 
+    media_join_condition(message_schema, media_schema)
+        .map(|condition| format!("LEFT JOIN {} mi ON {condition}", media_schema.name))
+        .unwrap_or_default()
+}
+
+fn group_member_join_expr(
+    message_schema: &TableSchema,
+    group_member_schema: Option<&TableSchema>,
+) -> String {
+    let Some(group_member_schema) = group_member_schema else {
+        return String::new();
+    };
+    if !message_schema.has("ZGROUPMEMBER") || !group_member_schema.has("Z_PK") {
+        return String::new();
+    }
+
+    format!(
+        "LEFT JOIN {} gm ON m.ZGROUPMEMBER = gm.Z_PK",
+        group_member_schema.name
+    )
+}
+
+fn profile_push_name_join_expr(
+    message_schema: &TableSchema,
+    group_member_schema: Option<&TableSchema>,
+    profile_push_name_schema: Option<&TableSchema>,
+) -> String {
+    let Some(profile_push_name_schema) = profile_push_name_schema else {
+        return String::new();
+    };
+    if !profile_push_name_schema.has("ZJID") || !profile_push_name_schema.has("ZPUSHNAME") {
+        return String::new();
+    }
+    let Some(sender_jid_expr) = sender_jid_expr(message_schema, group_member_schema) else {
+        return String::new();
+    };
+
+    format!(
+        "LEFT JOIN {} ppn ON ppn.ZJID = {sender_jid_expr}",
+        profile_push_name_schema.name
+    )
+}
+
+fn sender_jid_expr(
+    message_schema: &TableSchema,
+    group_member_schema: Option<&TableSchema>,
+) -> Option<String> {
+    let mut candidates = Vec::new();
+    if group_member_schema.is_some_and(|schema| schema.has("ZMEMBERJID")) {
+        candidates.push(text_column_expr("gm", "ZMEMBERJID"));
+    }
+    if message_schema.has("ZFROMJID") {
+        candidates.push(text_column_expr("m", "ZFROMJID"));
+    }
+
+    match candidates.len() {
+        0 => None,
+        1 => candidates.into_iter().next(),
+        _ => Some(format!("COALESCE({})", candidates.join(", "))),
+    }
+}
+
+fn media_join_condition(
+    message_schema: &TableSchema,
+    media_schema: &TableSchema,
+) -> Option<String> {
     if message_schema.has("ZMEDIAITEM") && media_schema.has("Z_PK") {
-        return format!(
-            "LEFT JOIN {} mi ON m.ZMEDIAITEM = mi.Z_PK",
-            media_schema.name
-        );
+        return Some("m.ZMEDIAITEM = mi.Z_PK".to_owned());
     }
 
     if message_schema.has("Z_PK") && media_schema.has("ZMESSAGE") {
-        return format!("LEFT JOIN {} mi ON mi.ZMESSAGE = m.Z_PK", media_schema.name);
+        return Some("mi.ZMESSAGE = m.Z_PK".to_owned());
     }
 
-    String::new()
+    None
+}
+
+fn group_member_name_expr(group_member_schema: Option<&TableSchema>) -> String {
+    let Some(group_member_schema) = group_member_schema else {
+        return "NULL".to_owned();
+    };
+
+    coalesced_optional_text_expr("gm", group_member_schema, &["ZCONTACTNAME", "ZFIRSTNAME"])
+}
+
+fn profile_push_name_expr(profile_push_name_schema: Option<&TableSchema>) -> String {
+    profile_push_name_schema
+        .filter(|schema| schema.has("ZPUSHNAME"))
+        .map(|schema| nullable_text_expr("ppn", schema, "ZPUSHNAME"))
+        .unwrap_or_else(|| "NULL".to_owned())
+}
+
+fn media_importable_predicate(media_schema: &TableSchema) -> Option<String> {
+    let predicates: Vec<String> = ["ZMEDIALOCALPATH", "ZTITLE"]
+        .into_iter()
+        .filter(|column| media_schema.has(column))
+        .map(|column| format!("{} IS NOT NULL", text_column_expr("mi", column)))
+        .collect();
+
+    if predicates.is_empty() {
+        None
+    } else {
+        Some(format!("({})", predicates.join(" OR ")))
+    }
 }
 
 fn message_order_expr(message_schema: &TableSchema) -> String {
+    message_order_expr_for_alias(message_schema, "m")
+}
+
+fn message_order_expr_for_alias(message_schema: &TableSchema, alias: &str) -> String {
     if message_schema.has("ZSORT") {
-        return "m.ZSORT".to_owned();
+        return format!("{alias}.ZSORT");
     }
     if message_schema.has("ZMESSAGEDATE") {
-        return "m.ZMESSAGEDATE".to_owned();
+        return format!("{alias}.ZMESSAGEDATE");
     }
 
-    "m.Z_PK".to_owned()
+    format!("{alias}.Z_PK")
+}
+
+fn chat_message_filter_expr(message_schema: &TableSchema, message_limit: Option<usize>) -> String {
+    let Some(limit) = message_limit else {
+        return "m.ZCHATSESSION = ?1".to_owned();
+    };
+    let order_expr = message_order_expr_for_alias(message_schema, "scoped");
+
+    format!(
+        r#"
+        m.Z_PK IN (
+            SELECT scoped.Z_PK
+            FROM {MESSAGE_TABLE} scoped
+            WHERE scoped.ZCHATSESSION = ?1
+            ORDER BY {order_expr} DESC, scoped.Z_PK DESC
+            LIMIT {limit}
+        )
+        "#
+    )
+}
+
+fn chat_search_filter_expr(searchable_exprs: &[&str], token_count: usize) -> String {
+    if token_count == 0 {
+        return "1 = 1".to_owned();
+    }
+
+    (0..token_count)
+        .map(|_| {
+            format!(
+                "({})",
+                searchable_exprs
+                    .iter()
+                    .map(|expr| format!("LOWER(COALESCE({expr}, '')) LIKE ? ESCAPE '\\'"))
+                    .collect::<Vec<_>>()
+                    .join(" OR ")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" AND ")
+}
+
+fn sql_limit_clause(limit: Option<usize>) -> String {
+    limit
+        .map(|limit| format!("LIMIT {limit}"))
+        .unwrap_or_default()
 }
 
 fn coalesced_text_expr(
@@ -509,6 +1101,23 @@ fn coalesced_text_expr(
     parts.push(fallback.to_owned());
 
     format!("COALESCE({})", parts.join(", "))
+}
+
+fn coalesced_optional_text_expr(alias: &str, schema: &TableSchema, columns: &[&str]) -> String {
+    let parts: Vec<String> = columns
+        .iter()
+        .filter(|column| schema.has(column))
+        .map(|column| text_column_expr(alias, column))
+        .collect();
+
+    match parts.len() {
+        0 => "NULL".to_owned(),
+        1 => parts
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| "NULL".to_owned()),
+        _ => format!("COALESCE({})", parts.join(", ")),
+    }
 }
 
 fn nullable_text_expr(alias: &str, schema: &TableSchema, column: &str) -> String {
@@ -549,6 +1158,30 @@ fn cocoa_timestamp_expr(seconds_expr: &str) -> String {
     format!("strftime('%m/%d/%Y, %H:%M', '2001-01-01', CAST({seconds_expr} AS TEXT) || ' seconds')")
 }
 
+fn search_tokens(query: &str) -> Vec<String> {
+    query
+        .split_whitespace()
+        .map(|token| token.trim().to_lowercase())
+        .filter(|token| !token.is_empty())
+        .collect()
+}
+
+fn like_contains_pattern(token: &str) -> String {
+    let mut pattern = String::with_capacity(token.len() + 2);
+    pattern.push('%');
+    for character in token.chars() {
+        match character {
+            '\\' | '%' | '_' => {
+                pattern.push('\\');
+                pattern.push(character);
+            }
+            _ => pattern.push(character),
+        }
+    }
+    pattern.push('%');
+    pattern
+}
+
 fn first_nonempty<'a>(values: impl IntoIterator<Item = Option<&'a str>>) -> Option<String> {
     values
         .into_iter()
@@ -556,6 +1189,171 @@ fn first_nonempty<'a>(values: impl IntoIterator<Item = Option<&'a str>>) -> Opti
         .map(str::trim)
         .find(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn first_display_message_text<'a>(
+    values: impl IntoIterator<Item = Option<&'a str>>,
+) -> Option<String> {
+    values.into_iter().flatten().find_map(display_message_text)
+}
+
+fn display_message_text(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+
+    if looks_like_whatsapp_structured_system_event(value) {
+        return Some("System event".to_owned());
+    }
+
+    let redacted = redact_internal_message_identifiers(value);
+    let redacted = redacted.trim();
+    if redacted.is_empty() {
+        None
+    } else {
+        Some(redacted.to_owned())
+    }
+}
+
+fn display_chat_title(value: &str) -> String {
+    let value = value.trim();
+    if value.is_empty() {
+        return "Imported chat".to_owned();
+    }
+
+    let Some((local_part, domain)) = value.rsplit_once('@') else {
+        return value.to_owned();
+    };
+
+    match domain {
+        "g.us" => "Group chat".to_owned(),
+        "lid" => "Participant".to_owned(),
+        "s.whatsapp.net" => display_direct_jid_title(local_part),
+        _ => value.to_owned(),
+    }
+}
+
+fn display_direct_jid_title(local_part: &str) -> String {
+    if local_part.len() >= 8 && local_part.bytes().all(|byte| byte.is_ascii_digit()) {
+        format!("+{local_part}")
+    } else if local_part.trim().is_empty() {
+        "Imported chat".to_owned()
+    } else {
+        local_part.to_owned()
+    }
+}
+
+fn looks_like_whatsapp_structured_system_event(value: &str) -> bool {
+    value.starts_with('{')
+        && value.ends_with('}')
+        && value.contains("\"reason\"")
+        && (value.contains("\"is_open_group\"")
+            || value.contains("\"parent_group_jid\"")
+            || value.contains("\"show_membership_string\""))
+}
+
+fn redact_internal_message_identifiers(value: &str) -> String {
+    let mut redacted = String::with_capacity(value.len());
+    let mut index = 0;
+
+    while index < value.len() {
+        let remaining = &value[index..];
+        if let Some((consumed, replacement)) = internal_identifier_replacement(remaining) {
+            redacted.push_str(replacement);
+            index += consumed;
+            continue;
+        }
+
+        let character = remaining
+            .chars()
+            .next()
+            .expect("remaining slice is non-empty");
+        redacted.push(character);
+        index += character.len_utf8();
+    }
+
+    redacted
+}
+
+fn internal_identifier_replacement(value: &str) -> Option<(usize, &'static str)> {
+    internal_mention_replacement(value).or_else(|| internal_jid_replacement(value))
+}
+
+fn internal_mention_replacement(value: &str) -> Option<(usize, &'static str)> {
+    let remaining = value.strip_prefix('@')?;
+    let digit_count = remaining.bytes().take_while(u8::is_ascii_digit).count();
+    if digit_count >= 8 {
+        Some((1 + digit_count, "@Participant"))
+    } else {
+        None
+    }
+}
+
+fn internal_jid_replacement(value: &str) -> Option<(usize, &'static str)> {
+    let digit_count = value.bytes().take_while(u8::is_ascii_digit).count();
+    if digit_count < 8 {
+        return None;
+    }
+
+    let suffix = &value[digit_count..];
+    [
+        ("@lid", "Participant"),
+        ("@s.whatsapp.net", "Participant"),
+        ("@g.us", "Group"),
+    ]
+    .into_iter()
+    .find_map(|(domain, replacement)| {
+        suffix
+            .starts_with(domain)
+            .then_some((digit_count + domain.len(), replacement))
+    })
+}
+
+fn first_readable_sender<'a>(values: impl IntoIterator<Item = Option<&'a str>>) -> Option<String> {
+    values
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|value| is_readable_sender(value))
+        .map(ToOwned::to_owned)
+}
+
+fn is_readable_sender(value: &str) -> bool {
+    let value = value.trim();
+    if value.is_empty() {
+        return false;
+    }
+    if value.contains('@') {
+        return false;
+    }
+    if looks_like_phone_number(value) || looks_like_opaque_sender_identifier(value) {
+        return false;
+    }
+
+    true
+}
+
+fn looks_like_phone_number(value: &str) -> bool {
+    let digits = value
+        .chars()
+        .filter(|character| character.is_ascii_digit())
+        .count();
+    let separators = value
+        .chars()
+        .filter(|character| matches!(character, '+' | '-' | '(' | ')' | ' '))
+        .count();
+
+    digits >= 8 && digits + separators == value.chars().count()
+}
+
+fn looks_like_opaque_sender_identifier(value: &str) -> bool {
+    let value = value.trim();
+    value.len() >= 16
+        && value.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '+' | '/' | '=')
+        })
+        && (value.contains('=') || value.contains('+') || value.contains('/'))
 }
 
 fn filename_from_media_path(path: &str) -> String {
@@ -569,4 +1367,81 @@ fn filename_from_media_path(path: &str) -> String {
 
 fn nonnegative_i64_to_u64(value: i64) -> u64 {
     u64::try_from(value).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn schema(name: &'static str, columns: &[&str]) -> TableSchema {
+        TableSchema {
+            name,
+            columns: columns.iter().map(|column| (*column).to_owned()).collect(),
+        }
+    }
+
+    #[test]
+    fn chat_list_query_uses_joined_aggregates_for_large_histories() {
+        let chat_schema = schema(
+            CHAT_TABLE,
+            &[
+                "Z_PK",
+                "ZCONTACTJID",
+                "ZPARTNERNAME",
+                "ZMESSAGECOUNTER",
+                "ZLASTMESSAGEDATE",
+            ],
+        );
+        let message_schema = schema(
+            MESSAGE_TABLE,
+            &["Z_PK", "ZCHATSESSION", "ZMESSAGEDATE", "ZMEDIAITEM"],
+        );
+        let media_schema = schema(MEDIA_ITEM_TABLE, &["Z_PK", "ZMEDIALOCALPATH", "ZTITLE"]);
+
+        let query = chat_list_query(
+            &chat_schema,
+            Some(&message_schema),
+            Some(&media_schema),
+            Some(1_000),
+            0,
+        );
+
+        assert!(query.contains("WITH message_summary AS"));
+        assert!(query.contains("attachment_summary AS"));
+        assert!(query.contains("LEFT JOIN message_summary ms ON ms.chat_id = c.Z_PK"));
+        assert!(query.contains("LEFT JOIN attachment_summary ats ON ats.chat_id = c.Z_PK"));
+        assert!(query.contains("ORDER BY sort_date DESC, c.Z_PK DESC"));
+        assert!(query.contains("LIMIT 1000"));
+        assert!(!query.contains("(SELECT"));
+        assert!(!query.contains("WHERE m.ZCHATSESSION = c.Z_PK"));
+    }
+
+    #[test]
+    fn chat_list_query_falls_back_to_chat_metadata_without_message_thread_column() {
+        let chat_schema = schema(
+            CHAT_TABLE,
+            &["Z_PK", "ZCONTACTJID", "ZMESSAGECOUNTER", "ZLASTMESSAGEDATE"],
+        );
+        let message_schema = schema(MESSAGE_TABLE, &["Z_PK", "ZTEXT"]);
+
+        let query = chat_list_query(&chat_schema, Some(&message_schema), None, None, 0);
+
+        assert!(!query.contains("WITH message_summary AS"));
+        assert!(query.contains("COALESCE(c.ZMESSAGECOUNTER, 0) AS message_count"));
+        assert!(query.contains("COALESCE(c.ZLASTMESSAGEDATE, 0) AS sort_date"));
+    }
+
+    #[test]
+    fn chat_list_query_filters_titles_without_correlated_scans() {
+        let chat_schema = schema(CHAT_TABLE, &["Z_PK", "ZCONTACTJID", "ZPARTNERNAME"]);
+        let message_schema = schema(MESSAGE_TABLE, &["Z_PK", "ZCHATSESSION", "ZMESSAGEDATE"]);
+
+        let query = chat_list_query(&chat_schema, Some(&message_schema), None, Some(200), 2);
+
+        assert!(query.contains("WHERE (LOWER(COALESCE("));
+        assert!(query.contains("LIKE ? ESCAPE '\\'"));
+        assert!(query.contains("LIMIT 200"));
+        assert!(!query.contains("(SELECT"));
+        assert!(!query.contains("WHERE m.ZCHATSESSION = c.Z_PK"));
+    }
 }

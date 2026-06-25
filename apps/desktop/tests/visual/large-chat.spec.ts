@@ -6,6 +6,8 @@ test("large synthetic chats render a bounded recent window before expanding olde
   await page.goto("/?demo=large-chat");
 
   await expect(page.getByTestId(TEST_IDS.chatTitle)).toHaveText("Large Archive");
+  await expect(page.getByText("900 recent messages loaded")).toBeVisible();
+  await expect(page.getByText("Search and export use the loaded recent messages.")).toBeVisible();
   await expect(page.getByTestId(TEST_IDS.messageBubble)).toHaveCount(420);
   await expect(page.getByTestId(TEST_IDS.showEarlierButton)).toHaveText("Show 420 earlier messages");
 

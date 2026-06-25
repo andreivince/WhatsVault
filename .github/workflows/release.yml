@@ -2,6 +2,12 @@ name: Release
 
 on:
   workflow_dispatch:
+    inputs:
+      stable_release:
+        description: Run stable-release signing preflight and mark the GitHub release as non-prerelease.
+        required: false
+        type: boolean
+        default: false
   push:
     tags:
       - "v*"
@@ -15,10 +21,77 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  WHATSVAULT_STABLE_RELEASE: ${{ inputs.stable_release == true && 'true' || 'false' }}
 
 jobs:
+  stable-signing-preflight:
+    name: Stable signing preflight
+    runs-on: macos-latest
+    if: inputs.stable_release == true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install desktop dependencies
+        working-directory: apps/desktop
+        run: npm ci
+
+      - name: Prepare App Store Connect API key path
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_PRIVATE_KEY: ${{ secrets.APPLE_API_KEY_PRIVATE_KEY }}
+        run: |
+          if [ -z "$APPLE_API_KEY_PRIVATE_KEY" ]; then
+            echo "No APPLE_API_KEY_PRIVATE_KEY secret configured; Apple ID notarization may still satisfy preflight."
+            exit 0
+          fi
+          key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY:-whatsvault}.p8"
+          umask 077
+          printf '%s' "$APPLE_API_KEY_PRIVATE_KEY" > "$key_path"
+          echo "APPLE_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+
+      - name: Prepare runtime signing config
+        working-directory: apps/desktop
+        env:
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+          WINDOWS_DIGEST_ALGORITHM: ${{ secrets.WINDOWS_DIGEST_ALGORITHM }}
+          WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL }}
+          WINDOWS_SIGN_COMMAND: ${{ secrets.WINDOWS_SIGN_COMMAND }}
+        run: npm run release:prepare-signing-config
+
+      - name: Run strict stable release preflight
+        working-directory: apps/desktop
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+          WINDOWS_DIGEST_ALGORITHM: ${{ secrets.WINDOWS_DIGEST_ALGORITHM }}
+          WINDOWS_SIGN_COMMAND: ${{ secrets.WINDOWS_SIGN_COMMAND }}
+          WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL }}
+        run: |
+          npm run release:signing
+          npm run release:preflight
+
   tauri-release:
     name: Build release (${{ matrix.label }})
+    needs: stable-signing-preflight
+    if: always() && (inputs.stable_release != true || needs.stable-signing-preflight.result == 'success')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -74,10 +147,115 @@ jobs:
           WHATSVAULT_EXPECTED_TAG: ${{ steps.release-version.outputs.tag }}
         run: node -e "if (process.env.GITHUB_REF_TYPE === 'tag' && process.env.GITHUB_REF_NAME !== process.env.WHATSVAULT_EXPECTED_TAG) { throw new Error('Release tag ' + process.env.GITHUB_REF_NAME + ' does not match app version tag ' + process.env.WHATSVAULT_EXPECTED_TAG); }"
 
+      - name: Prepare macOS App Store Connect API key
+        if: runner.os == 'macOS'
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_PRIVATE_KEY: ${{ secrets.APPLE_API_KEY_PRIVATE_KEY }}
+        run: |
+          if [ -z "$APPLE_API_KEY_PRIVATE_KEY" ]; then
+            echo "No APPLE_API_KEY_PRIVATE_KEY secret configured; skipping App Store Connect API key file."
+            exit 0
+          fi
+          key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY:-whatsvault}.p8"
+          umask 077
+          printf '%s' "$APPLE_API_KEY_PRIVATE_KEY" > "$key_path"
+          echo "APPLE_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+
+      - name: Import macOS signing certificate
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "No APPLE_CERTIFICATE secret configured; building unsigned unless stable preflight is enabled."
+            exit 0
+          fi
+          if [ -z "$APPLE_CERTIFICATE_PASSWORD" ] || [ -z "$KEYCHAIN_PASSWORD" ]; then
+            echo "APPLE_CERTIFICATE is set, but APPLE_CERTIFICATE_PASSWORD or KEYCHAIN_PASSWORD is missing."
+            exit 1
+          fi
+          certificate_path="$RUNNER_TEMP/whatsvault-certificate.p12"
+          keychain_path="$RUNNER_TEMP/whatsvault-signing.keychain-db"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$certificate_path"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$keychain_path"
+          security import "$certificate_path" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain_path"
+          security list-keychain -d user -s "$keychain_path"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$keychain_path"
+          if [ -n "$APPLE_SIGNING_IDENTITY" ]; then
+            echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY" >> "$GITHUB_ENV"
+          fi
+
+      - name: Import Windows signing certificate
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if (-not $env:WINDOWS_CERTIFICATE) {
+            Write-Output "No WINDOWS_CERTIFICATE secret configured; building unsigned unless stable preflight is enabled."
+            exit 0
+          }
+          if (-not $env:WINDOWS_CERTIFICATE_PASSWORD) {
+            Write-Error "WINDOWS_CERTIFICATE is set, but WINDOWS_CERTIFICATE_PASSWORD is missing."
+            exit 1
+          }
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\whatsvault-signing" | Out-Null
+          $base64Path = "$env:RUNNER_TEMP\whatsvault-signing\certificate.txt"
+          $certificatePath = "$env:RUNNER_TEMP\whatsvault-signing\certificate.pfx"
+          Set-Content -Path $base64Path -Value $env:WINDOWS_CERTIFICATE
+          certutil -decode $base64Path $certificatePath | Out-Null
+          Remove-Item $base64Path
+          $password = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText
+          Import-PfxCertificate -FilePath $certificatePath -CertStoreLocation Cert:\CurrentUser\My -Password $password | Out-Null
+
+      - name: Prepare runtime signing config
+        working-directory: apps/desktop
+        env:
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+          WINDOWS_DIGEST_ALGORITHM: ${{ secrets.WINDOWS_DIGEST_ALGORITHM }}
+          WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL }}
+          WINDOWS_SIGN_COMMAND: ${{ secrets.WINDOWS_SIGN_COMMAND }}
+        run: npm run release:prepare-signing-config
+
+      - name: Check signing readiness
+        working-directory: apps/desktop
+        shell: bash
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+          WINDOWS_DIGEST_ALGORITHM: ${{ secrets.WINDOWS_DIGEST_ALGORITHM }}
+          WINDOWS_SIGN_COMMAND: ${{ secrets.WINDOWS_SIGN_COMMAND }}
+          WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL }}
+        run: |
+          npm run release:signing
+
       - name: Build and upload Tauri artifacts
         uses: tauri-apps/tauri-action@v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           projectPath: apps/desktop
           tauriScript: npm run tauri
@@ -88,11 +266,11 @@ jobs:
             Pre-alpha WhatsVault desktop release.
 
             Known limits:
-            - WhatsApp export ZIP viewing is available.
-            - iPhone backup browsing is still in proof work.
+            - WhatsApp export ZIP viewing is available with a bounded latest-message window for large exports.
+            - iPhone backup chat rendering, bounded media preview, and bounded HTML export have local proof.
             - macOS and Windows bundles are unsigned until signing is configured.
           releaseDraft: true
-          prerelease: true
+          prerelease: ${{ env.WHATSVAULT_STABLE_RELEASE != 'true' }}
 
       - name: Generate release checksums
         working-directory: apps/desktop

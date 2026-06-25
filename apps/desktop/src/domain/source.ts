@@ -20,9 +20,9 @@ const SOURCE_PROFILES: Record<SourceKind, SourceProfile> = {
   iphone_backup: {
     kind: "iphone_backup",
     displayName: "iPhone backup",
-    availabilityLabel: "Proof work",
+    availabilityLabel: "Preview ready",
     availabilityDetail:
-      "Real-backup proof pending. Synthetic backup coverage keeps this path visible while parser work continues.",
+      "Real backup chats render locally with bounded media preview and HTML export.",
     availabilityTone: "proof",
     pickerName: "iPhone backup",
     pickerExtensions: [],

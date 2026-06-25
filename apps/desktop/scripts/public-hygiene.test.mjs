@@ -1,8 +1,12 @@
+import { createHash } from "node:crypto";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
+  auditDemoAssetManifest,
   auditPublicRepository,
   auditTextContent,
   auditTrackedFileNames,
@@ -104,6 +108,62 @@ describe("public repository hygiene guard", () => {
     expect(hasPrivateDemoText("Synthetic demo copy only.")).toBe(false);
     expect(hasPrivateDemoText(privateMarker(["+", "55", " ", "11", " ", "91234", "-5678"]))).toBe(true);
     expect(hasPrivateDemoText("6/23/26, 9:44 AM - Jane Doe: Exported message body")).toBe(true);
+  });
+
+  it("verifies synthetic demo asset hashes from the public manifest", async () => {
+    const tempRoot = await mkdtemp(resolve(tmpdir(), "whatsvault-demo-assets-"));
+    try {
+      const assetPath = "docs/assets/demo.mp4";
+      const assetBytes = Buffer.from("synthetic demo");
+      await mkdir(resolve(tempRoot, "docs/assets"), { recursive: true });
+      await writeFile(resolve(tempRoot, assetPath), assetBytes);
+      await writeFile(
+        resolve(tempRoot, "docs/assets/demo-assets-manifest.json"),
+        JSON.stringify({
+          assets: [
+            {
+              path: assetPath,
+              sha256: createHash("sha256").update(assetBytes).digest("hex"),
+              source: "synthetic Playwright demo",
+            },
+          ],
+        }),
+      );
+
+      await expect(auditDemoAssetManifest(tempRoot)).resolves.toEqual([]);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("flags demo asset hash mismatches", async () => {
+    const tempRoot = await mkdtemp(resolve(tmpdir(), "whatsvault-demo-assets-"));
+    try {
+      const assetPath = "docs/assets/demo.mp4";
+      await mkdir(resolve(tempRoot, "docs/assets"), { recursive: true });
+      await writeFile(resolve(tempRoot, assetPath), "private replacement");
+      await writeFile(
+        resolve(tempRoot, "docs/assets/demo-assets-manifest.json"),
+        JSON.stringify({
+          assets: [
+            {
+              path: assetPath,
+              sha256: "0".repeat(64),
+              source: "synthetic Playwright demo",
+            },
+          ],
+        }),
+      );
+
+      await expect(auditDemoAssetManifest(tempRoot)).resolves.toMatchObject([
+        {
+          code: "demo-asset-hash-mismatch",
+          path: assetPath,
+        },
+      ]);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it("keeps the current public candidate repository files free of private artifacts and personal roadmap text", async () => {

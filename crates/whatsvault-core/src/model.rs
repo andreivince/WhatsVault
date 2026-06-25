@@ -113,7 +113,9 @@ pub struct ImportIssue {
 #[serde(rename_all = "snake_case")]
 pub enum ImportIssueCode {
     ContinuationWithoutMessage,
+    MessageWindowTruncated,
     MultipleTranscripts,
     MissingAttachmentReference,
     NoTranscript,
+    SearchResultsTruncated,
 }

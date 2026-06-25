@@ -54,7 +54,8 @@ The export ZIP importer should:
 4. Resolve media references from transcript lines to archive entries.
 5. Report missing media as structured import issues instead of failing the whole import.
 6. Read bounded attachment payloads for previews on demand.
-7. Avoid logging or committing message bodies.
+7. Keep large transcript imports bounded to a latest-message window before data reaches the UI.
+8. Avoid logging or committing message bodies.
 
 ## Verified Parser Behavior
 
@@ -68,6 +69,7 @@ Covered by tests:
 - media filename classification
 - media reference resolution
 - bounded attachment byte lookup by normalized archive path
+- bounded latest-message import for large transcripts
 - oversized attachment preview skip behavior
 - missing transcript errors
 - continuation-without-message import issues
@@ -85,7 +87,7 @@ The desktop app can:
 4. Search message sender/body text.
 5. Preview bounded images, stickers, audio, video, and documents from the archive without extracting the ZIP.
 6. Open image media in an in-app preview modal.
-7. Export the chat to one self-contained HTML file with bounded embedded media.
+7. Export the loaded latest-message window to one self-contained HTML file with bounded embedded media.
 8. Build as a local macOS `.app` and DMG through Tauri.
 
 HTML export is intentionally conservative:

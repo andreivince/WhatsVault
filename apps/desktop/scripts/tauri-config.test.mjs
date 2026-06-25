@@ -30,6 +30,7 @@ describe("Tauri release configuration", () => {
       focus: true,
       center: true,
       resizable: true,
+      decorations: false,
     });
   });
 
@@ -80,9 +81,27 @@ describe("Tauri release configuration", () => {
       identifier: "default",
       windows: ["main"],
     });
-    expect(capability.permissions).toEqual(["core:default"]);
+    expect(capability.permissions).toEqual([
+      "core:default",
+      "core:window:allow-start-dragging",
+      "core:window:allow-minimize",
+      "core:window:allow-toggle-maximize",
+      "core:window:allow-close",
+    ]);
     expect(capability.permissions).not.toContain("dialog:default");
     expect(capability.permissions).not.toContain("dialog:allow-open");
     expect(capability.permissions).not.toContain("dialog:allow-save");
+  });
+
+  it("keeps a frameless window movable with only real custom window controls", async () => {
+    const config = await readConfig();
+    const capability = await readDefaultCapability();
+
+    expect(config.app?.windows?.[0]?.decorations).toBe(false);
+    expect(capability.permissions).toContain("core:window:allow-start-dragging");
+    expect(capability.permissions).toContain("core:window:allow-close");
+    expect(capability.permissions).toContain("core:window:allow-minimize");
+    expect(capability.permissions).toContain("core:window:allow-toggle-maximize");
+    expect(capability.permissions).not.toContain("core:window:allow-maximize");
   });
 });

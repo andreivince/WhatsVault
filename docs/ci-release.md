@@ -13,6 +13,7 @@ The quality job checks:
 - Rust workspace tests
 - frontend unit tests
 - public repository hygiene guard
+- release readiness honesty guard
 - frontend production build
 - npm dependency audit
 
@@ -40,6 +41,8 @@ The release workflow reads the app version from `apps/desktop/src-tauri/tauri.co
 
 Each bundle smoke job also runs `npm run release:checksums` after the Tauri build. This proves the release checksum generator can find the platform bundle outputs before a tagged release is attempted.
 
+Manual release dispatch includes a `stable_release` input. When it is enabled, a dedicated `stable-signing-preflight` job runs once before the build matrix. That job prepares temporary signing inputs, generates runtime-only Windows Tauri signing config, and runs `npm run release:preflight`. Matrix builds then import platform-specific certificates and build artifacts only after the once-per-release signing gate passes.
+
 Tagged releases upload target-specific checksum manifests next to the Tauri bundles:
 
 - `WhatsVault_macos-aarch64_SHA256SUMS.txt`
@@ -47,6 +50,16 @@ Tagged releases upload target-specific checksum manifests next to the Tauri bund
 - `WhatsVault_windows-x86_64_SHA256SUMS.txt`
 
 The checksum command reads bundle output from `target/release/bundle` by default and writes ignored release metadata to `target/release/release-metadata`.
+
+## Release Readiness Guard
+
+`npm run release:readiness` is an honesty guard. It exits successfully when the repository documents the current release blockers accurately.
+
+`npm run release:preflight` is the stable-release gate. It exits nonzero while any stable-release blocker remains:
+
+1. macOS or Windows signing is not configured
+
+Current pre-alpha state is allowed only when the remaining signing blocker stays visible in README, supported-source, architecture, and release docs.
 
 ## Local Package Smoke
 
@@ -56,13 +69,56 @@ Local macOS package checks should verify:
 - `npm run release:checksums` writes checksum metadata under `target/release/release-metadata`.
 - The packaged `.app` opens to the source screen from the generated bundle, not only from the Vite dev server.
 
-Current local note: on this macOS 26.5.1 machine, Tauri 2.11.3 with Tao 0.35.3 opens a real app window but the WebView surface captures as blank. This matches the upstream Tauri issue [tauri-apps/tauri#15517](https://github.com/tauri-apps/tauri/issues/15517). Until Tauri/Tao ships a stable fix or the project pins an upstream-reviewed workaround, local package smoke on macOS 26 must be recorded as blocked, not passed. Browser visual checks still prove the React UI, but they do not prove packaged app rendering.
+Current local note: the generated macOS `.app` opens to a nonblank source screen from the bundle. Real local iPhone-backup chat rendering, bounded media preview, and bounded HTML export have passed through the packaged app. On this machine, default MobileSync scanning can still be blocked by macOS filesystem access, so the app exposes a native "Choose folder" fallback instead of requiring terminal launch.
+
+Public-safe proof notes for these local checks live in [proof-evidence.md](proof-evidence.md). Do not commit private screenshots, exported HTML, backup paths, file IDs, contact details, message text, or media filenames as proof artifacts.
 
 ## Signing Status
 
-Current release artifacts are unsigned. The macOS Tauri config intentionally leaves `bundle.macOS.signingIdentity` unset until Developer ID signing and notarization are configured. Before a public stable release:
+Current release artifacts are unsigned. The macOS Tauri config intentionally leaves `bundle.macOS.signingIdentity` unset because Tauri can read the signing identity from `APPLE_SIGNING_IDENTITY`, and the repository must not commit certificate-specific values. The Windows Tauri signing config is also absent until a concrete signing profile is selected.
+
+Run the local signing readiness check:
+
+```sh
+cd apps/desktop
+npm run release:signing
+```
+
+Run the strict stable-release check:
+
+```sh
+cd apps/desktop
+npm run release:signing:strict
+```
+
+The signing checker reports missing variable names only. It must never print certificate contents, passwords, private key material, or local keychain paths.
+
+For macOS direct distribution, follow Tauri's macOS signing and notarization guide: https://v2.tauri.app/distribute/sign/macos/
+
+Stable macOS signing requires:
+
+- `APPLE_SIGNING_IDENTITY`
+- one notarization profile:
+  - App Store Connect API: `APPLE_API_ISSUER`, `APPLE_API_KEY`, `APPLE_API_KEY_PATH`
+  - Apple ID app-specific password: `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`
+- in GitHub Actions, exported certificate import inputs: `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `KEYCHAIN_PASSWORD`
+- in GitHub Actions with App Store Connect API notarization, `APPLE_API_KEY_PRIVATE_KEY` is written to a temporary key file and exported as `APPLE_API_KEY_PATH`
+
+For Windows distribution, follow Tauri's Windows signing guide: https://v2.tauri.app/distribute/sign/windows/
+
+Stable Windows signing requires one Tauri Windows signing profile:
+
+- certificate thumbprint profile: `bundle.windows.certificateThumbprint`, `bundle.windows.digestAlgorithm`, and `bundle.windows.timestampUrl`
+- or custom signing command profile: `bundle.windows.signCommand`
+
+Do not commit certificate-specific Windows config unless the value is intentionally public for the project. The release workflow can generate the Windows Tauri signing config at runtime from `WINDOWS_CERTIFICATE_THUMBPRINT`, `WINDOWS_DIGEST_ALGORITHM`, and `WINDOWS_TIMESTAMP_URL`.
+
+In GitHub Actions, a certificate-thumbprint profile also needs `WINDOWS_CERTIFICATE` and `WINDOWS_CERTIFICATE_PASSWORD` so the runner can import the certificate before building.
+
+Before a public stable release:
 
 1. Configure macOS signing and notarization.
 2. Configure Windows code signing.
-3. Update release notes with exact install warnings and known limits.
-4. Re-test install/open behavior on clean macOS and Windows machines.
+3. Run `npm run release:signing:strict`.
+4. Update release notes with exact install warnings and known limits.
+5. Re-test install/open behavior on clean macOS and Windows machines.

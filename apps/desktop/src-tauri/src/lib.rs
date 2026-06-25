@@ -14,17 +14,33 @@ use whatsvault_core::{
     exports::html::{build_chat_html_export, EmbeddedAttachment, HtmlExportOptions},
     media::attachment_media_type,
     sources::iphone_backup::{
-        discover_default_backup_candidates, find_whatsapp_manifest_files,
+        discover_backup_candidates_from_selected_path, discover_default_backup_candidates,
+        find_whatsapp_manifest_file_by_relative_path, normalize_whatsapp_media_relative_path,
         physical_backup_file_path, read_backup_metadata, resolve_whatsapp_media_file_path,
+        resolve_whatsapp_media_file_paths, summarize_whatsapp_manifest_files,
+        CHAT_STORAGE_RELATIVE_PATH,
     },
-    sources::whatsapp_export_zip::{import_whatsapp_export_zip, read_whatsapp_export_attachment},
-    whatsapp::chat_storage::{import_chat_storage_chat, list_chat_storage_chats},
-    AttachmentKind, BackupCandidate, BackupMetadata, Chat, ChatImport, WhatsappManifestFiles,
+    sources::whatsapp_export_zip::{
+        import_whatsapp_export_zip_with_options, read_whatsapp_export_attachment,
+        read_whatsapp_export_attachments, WhatsappExportImportOptions,
+        DEFAULT_WHATSAPP_EXPORT_IMPORT_MAX_MESSAGES,
+    },
+    whatsapp::chat_storage::{
+        count_chat_storage_chat_messages, import_chat_storage_chat_recent,
+        list_chat_storage_chats_limited, search_chat_storage_chat_recent,
+        search_chat_storage_chats_limited,
+    },
+    AttachmentKind, BackupCandidate, BackupMetadata, Chat, ChatImport, ImportIssue,
+    ImportIssueCode, MessageTimestamp,
 };
 
 const ATTACHMENT_PREVIEW_MAX_BYTES: u64 = 8 * 1024 * 1024;
 const ATTACHMENT_EXPORT_MAX_BYTES: u64 = 24 * 1024 * 1024;
 const TOTAL_EXPORT_EMBEDDED_MEDIA_MAX_BYTES: u64 = 128 * 1024 * 1024;
+const BACKUP_CHAT_LIST_MAX_ROWS: usize = 1_000;
+const BACKUP_CHAT_SEARCH_MAX_ROWS: usize = 200;
+const BACKUP_CHAT_IMPORT_MAX_MESSAGES: usize = 2_000;
+const BACKUP_CHAT_SEARCH_MAX_RESULTS: usize = 500;
 type SourceRegistryState = Mutex<SourceRegistry>;
 
 #[derive(Debug, Default)]
@@ -90,6 +106,8 @@ pub struct AttachmentPreviewDto {
 pub struct HtmlExportResultDto {
     pub embedded_attachment_count: usize,
     pub skipped_attachment_count: usize,
+    pub exported_message_count: usize,
+    pub skipped_message_count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -116,6 +134,46 @@ pub struct WhatsappBackupStatusDto {
     pub media_file_count: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatDto {
+    pub id: String,
+    pub title: String,
+    pub latest_message: Option<String>,
+    pub latest_message_timestamp: Option<MessageTimestamp>,
+    pub message_count: u64,
+    pub attachment_count: u64,
+}
+
+impl From<Chat> for ChatDto {
+    fn from(chat: Chat) -> Self {
+        Self {
+            id: chat.id,
+            title: chat.title,
+            latest_message: chat.latest_message,
+            latest_message_timestamp: chat.latest_message_timestamp,
+            message_count: chat.message_count,
+            attachment_count: chat.attachment_count,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IphoneBackupChatsResultDto {
+    pub chats: Vec<ChatDto>,
+    pub is_truncated: bool,
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IphoneBackupChatSearchResultDto {
+    pub imported: ChatImport,
+    pub is_truncated: bool,
+    pub limit: usize,
+}
+
 #[tauri::command]
 fn list_iphone_backups(
     registry: State<'_, SourceRegistryState>,
@@ -123,19 +181,21 @@ fn list_iphone_backups(
     let candidates = discover_default_backup_candidates().map_err(|_| {
         "Could not scan the default iPhone backup folders on this computer.".to_owned()
     })?;
-    let mut registry = registry
-        .lock()
-        .map_err(|_| "Could not access local source handles.".to_owned())?;
-    registry.clear_backups();
+    register_backup_candidate_dtos(&registry, &candidates)
+}
 
-    Ok(candidates
-        .iter()
-        .enumerate()
-        .map(|(index, candidate)| {
-            let handle = registry.register_backup(index, PathBuf::from(&candidate.path));
-            backup_candidate_dto(candidate, index, handle)
-        })
-        .collect())
+#[tauri::command]
+async fn choose_iphone_backup_folder(
+    app: AppHandle,
+    registry: State<'_, SourceRegistryState>,
+) -> Result<Option<Vec<IphoneBackupCandidateDto>>, String> {
+    let Some(source_path) = select_iphone_backup_folder_path(&app)? else {
+        return Ok(None);
+    };
+    let candidates = discover_backup_candidates_from_selected_path(&source_path)
+        .map_err(|_| "Could not read iPhone backups from the selected folder.".to_owned())?;
+
+    register_backup_candidate_dtos(&registry, &candidates).map(Some)
 }
 
 #[tauri::command]
@@ -149,8 +209,12 @@ async fn open_whatsapp_export(
 
     let file = File::open(&source_path)
         .map_err(|error| PublicError::SelectedSourceUnreadable.redact(error))?;
-    let imported = import_whatsapp_export_zip(file)
-        .map_err(|error| PublicError::SelectedSourceImportFailed.redact(error))?;
+    let imported = import_whatsapp_export_zip_with_options(
+        file,
+        WhatsappExportImportOptions::recent(DEFAULT_WHATSAPP_EXPORT_IMPORT_MAX_MESSAGES),
+    )
+    .map(|result| result.imported)
+    .map_err(|error| PublicError::SelectedSourceImportFailed.redact(error))?;
     let display_name = source_display_name(&source_path);
     let handle = registry
         .lock()
@@ -172,15 +236,63 @@ async fn open_whatsapp_export(
 fn list_iphone_backup_chats(
     backup_handle: String,
     registry: State<'_, SourceRegistryState>,
-) -> Result<Vec<Chat>, String> {
+) -> Result<IphoneBackupChatsResultDto, String> {
     let backup_path = registered_backup_path(&registry, &backup_handle)?;
     list_iphone_backup_chats_from_path(&backup_path)
 }
 
-fn list_iphone_backup_chats_from_path(backup_path: &Path) -> Result<Vec<Chat>, String> {
+fn list_iphone_backup_chats_from_path(
+    backup_path: &Path,
+) -> Result<IphoneBackupChatsResultDto, String> {
     let chat_storage_path = resolved_chat_storage_path(backup_path)?;
-    list_chat_storage_chats(chat_storage_path)
-        .map_err(|error| PublicError::BackupChatListFailed.redact(error))
+    let mut chats = list_chat_storage_chats_limited(
+        chat_storage_path,
+        BACKUP_CHAT_LIST_MAX_ROWS.saturating_add(1),
+    )
+    .map_err(|error| PublicError::BackupChatListFailed.redact(error))?;
+    let is_truncated = chats.len() > BACKUP_CHAT_LIST_MAX_ROWS;
+    if is_truncated {
+        chats.truncate(BACKUP_CHAT_LIST_MAX_ROWS);
+    }
+
+    Ok(IphoneBackupChatsResultDto {
+        chats: chats.into_iter().map(ChatDto::from).collect(),
+        is_truncated,
+        limit: BACKUP_CHAT_LIST_MAX_ROWS,
+    })
+}
+
+#[tauri::command]
+fn search_iphone_backup_chats(
+    backup_handle: String,
+    query: String,
+    registry: State<'_, SourceRegistryState>,
+) -> Result<IphoneBackupChatsResultDto, String> {
+    let backup_path = registered_backup_path(&registry, &backup_handle)?;
+    search_iphone_backup_chats_from_path(&backup_path, &query)
+}
+
+fn search_iphone_backup_chats_from_path(
+    backup_path: &Path,
+    query: &str,
+) -> Result<IphoneBackupChatsResultDto, String> {
+    let chat_storage_path = resolved_chat_storage_path(backup_path)?;
+    let mut chats = search_chat_storage_chats_limited(
+        chat_storage_path,
+        query,
+        BACKUP_CHAT_SEARCH_MAX_ROWS.saturating_add(1),
+    )
+    .map_err(|error| PublicError::BackupChatListFailed.redact(error))?;
+    let is_truncated = chats.len() > BACKUP_CHAT_SEARCH_MAX_ROWS;
+    if is_truncated {
+        chats.truncate(BACKUP_CHAT_SEARCH_MAX_ROWS);
+    }
+
+    Ok(IphoneBackupChatsResultDto {
+        chats: chats.into_iter().map(ChatDto::from).collect(),
+        is_truncated,
+        limit: BACKUP_CHAT_SEARCH_MAX_ROWS,
+    })
 }
 
 #[tauri::command]
@@ -198,8 +310,75 @@ fn import_iphone_backup_chat_from_path(
     chat_id: &str,
 ) -> Result<ChatImport, String> {
     let chat_storage_path = resolved_chat_storage_path(backup_path)?;
-    import_chat_storage_chat(chat_storage_path, chat_id)
-        .map_err(|error| PublicError::BackupChatImportFailed.redact(error))
+    let total_message_count = count_chat_storage_chat_messages(&chat_storage_path, chat_id)
+        .map_err(|error| PublicError::BackupChatImportFailed.redact(error))?;
+    let mut imported = import_chat_storage_chat_recent(
+        chat_storage_path,
+        chat_id,
+        BACKUP_CHAT_IMPORT_MAX_MESSAGES,
+    )
+    .map_err(|error| PublicError::BackupChatImportFailed.redact(error))?;
+    annotate_recent_message_window(&mut imported, total_message_count);
+
+    Ok(imported)
+}
+
+#[tauri::command]
+fn search_iphone_backup_chat(
+    backup_handle: String,
+    chat_id: String,
+    query: String,
+    registry: State<'_, SourceRegistryState>,
+) -> Result<IphoneBackupChatSearchResultDto, String> {
+    let backup_path = registered_backup_path(&registry, &backup_handle)?;
+    search_iphone_backup_chat_from_path(&backup_path, &chat_id, &query)
+}
+
+fn search_iphone_backup_chat_from_path(
+    backup_path: &Path,
+    chat_id: &str,
+    query: &str,
+) -> Result<IphoneBackupChatSearchResultDto, String> {
+    let chat_storage_path = resolved_chat_storage_path(backup_path)?;
+    let imported = search_chat_storage_chat_recent(
+        chat_storage_path,
+        chat_id,
+        query,
+        BACKUP_CHAT_SEARCH_MAX_RESULTS,
+    )
+    .map_err(|error| PublicError::BackupChatImportFailed.redact(error))?;
+    let is_truncated = imported
+        .issues
+        .iter()
+        .any(|issue| issue.code == ImportIssueCode::SearchResultsTruncated);
+
+    Ok(IphoneBackupChatSearchResultDto {
+        imported,
+        is_truncated,
+        limit: BACKUP_CHAT_SEARCH_MAX_RESULTS,
+    })
+}
+
+fn annotate_recent_message_window(imported: &mut ChatImport, total_message_count: u64) -> usize {
+    let skipped_message_count =
+        count_skipped_messages(total_message_count, imported.messages.len());
+    if skipped_message_count > 0 {
+        imported.issues.push(ImportIssue {
+            code: ImportIssueCode::MessageWindowTruncated,
+            message: format!(
+                "Only the latest {} messages were loaded for performance",
+                imported.messages.len()
+            ),
+        });
+    }
+
+    skipped_message_count
+}
+
+fn count_skipped_messages(total_message_count: u64, loaded_message_count: usize) -> usize {
+    usize::try_from(total_message_count)
+        .unwrap_or(usize::MAX)
+        .saturating_sub(loaded_message_count)
 }
 
 #[tauri::command]
@@ -284,10 +463,15 @@ fn export_whatsapp_export_html_file(
 ) -> Result<HtmlExportResultDto, String> {
     let source_file = File::open(source_path)
         .map_err(|error| PublicError::SelectedSourceUnreadable.redact(error))?;
-    let imported = import_whatsapp_export_zip(source_file)
-        .map_err(|error| PublicError::SelectedSourceImportFailed.redact(error))?;
+    let import_result = import_whatsapp_export_zip_with_options(
+        source_file,
+        WhatsappExportImportOptions::recent(DEFAULT_WHATSAPP_EXPORT_IMPORT_MAX_MESSAGES),
+    )
+    .map_err(|error| PublicError::SelectedSourceImportFailed.redact(error))?;
+    let imported = import_result.imported;
     let mut embedded_attachments = Vec::new();
     let mut embedded_media_bytes = 0_u64;
+    let mut requested_attachments = Vec::new();
 
     for attachment in &imported.attachments {
         if attachment.size_bytes > ATTACHMENT_EXPORT_MAX_BYTES {
@@ -299,14 +483,22 @@ fn export_whatsapp_export_html_file(
             continue;
         }
 
-        let Some(payload) = read_whatsapp_export_attachment(
-            File::open(source_path)
-                .map_err(|error| PublicError::SelectedSourceUnreadable.redact(error))?,
-            &attachment.archive_path,
-            ATTACHMENT_EXPORT_MAX_BYTES,
-        )
-        .map_err(|error| PublicError::HtmlExportFailed.redact(error))?
-        else {
+        embedded_media_bytes = embedded_media_bytes.saturating_add(attachment.size_bytes);
+        requested_attachments.push(attachment);
+    }
+
+    let payloads = read_whatsapp_export_attachments(
+        File::open(source_path)
+            .map_err(|error| PublicError::SelectedSourceUnreadable.redact(error))?,
+        requested_attachments
+            .iter()
+            .map(|attachment| attachment.archive_path.as_str()),
+        ATTACHMENT_EXPORT_MAX_BYTES,
+    )
+    .map_err(|error| PublicError::HtmlExportFailed.redact(error))?;
+
+    for attachment in requested_attachments {
+        let Some(payload) = payloads.get(&attachment.archive_path) else {
             continue;
         };
         let Some(media_type) = attachment_media_type(payload.kind, &payload.filename) else {
@@ -316,12 +508,17 @@ fn export_whatsapp_export_html_file(
         embedded_attachments.push(EmbeddedAttachment {
             attachment_id: attachment.id.clone(),
             media_type: media_type.to_owned(),
-            base64_data: STANDARD.encode(payload.bytes),
+            base64_data: STANDARD.encode(&payload.bytes),
         });
-        embedded_media_bytes = embedded_media_bytes.saturating_add(payload.size_bytes);
     }
 
-    write_chat_html_export(&imported, output_path, title, embedded_attachments)
+    write_chat_html_export(
+        &imported,
+        output_path,
+        title,
+        embedded_attachments,
+        import_result.skipped_message_count,
+    )
 }
 
 #[tauri::command]
@@ -348,10 +545,19 @@ fn export_iphone_backup_chat_html_file(
     title: &str,
 ) -> Result<HtmlExportResultDto, String> {
     let chat_storage_path = resolved_chat_storage_path(backup_path)?;
-    let imported = import_chat_storage_chat(chat_storage_path, chat_id)
+    let total_message_count = count_chat_storage_chat_messages(&chat_storage_path, chat_id)
         .map_err(|error| PublicError::BackupChatImportFailed.redact(error))?;
+    let imported = import_chat_storage_chat_recent(
+        &chat_storage_path,
+        chat_id,
+        BACKUP_CHAT_IMPORT_MAX_MESSAGES,
+    )
+    .map_err(|error| PublicError::BackupChatImportFailed.redact(error))?;
+    let skipped_message_count =
+        count_skipped_messages(total_message_count, imported.messages.len());
     let mut embedded_attachments = Vec::new();
     let mut embedded_media_bytes = 0_u64;
+    let mut requested_attachments = Vec::new();
 
     for attachment in &imported.attachments {
         if attachment.size_bytes > ATTACHMENT_EXPORT_MAX_BYTES {
@@ -363,11 +569,28 @@ fn export_iphone_backup_chat_html_file(
             continue;
         }
 
-        let Some((bytes, size_bytes)) = read_iphone_backup_attachment_bytes(
-            backup_path,
-            &attachment.archive_path,
-            ATTACHMENT_EXPORT_MAX_BYTES,
-        )?
+        embedded_media_bytes = embedded_media_bytes.saturating_add(attachment.size_bytes);
+        requested_attachments.push(attachment);
+    }
+
+    let manifest_db_path = backup_path.join("Manifest.db");
+    let resolved_media_paths = resolve_whatsapp_media_file_paths(
+        backup_path,
+        &manifest_db_path,
+        requested_attachments
+            .iter()
+            .map(|attachment| attachment.archive_path.as_str()),
+    )
+    .map_err(|_| "Could not resolve media from the selected iPhone backup.".to_owned())?;
+
+    for attachment in requested_attachments {
+        let archive_path_key = normalize_whatsapp_media_relative_path(&attachment.archive_path);
+        let Some(media_path) = resolved_media_paths.get(&archive_path_key) else {
+            continue;
+        };
+
+        let Some((bytes, _size_bytes)) =
+            read_attachment_file_bytes(media_path, ATTACHMENT_EXPORT_MAX_BYTES)?
         else {
             continue;
         };
@@ -380,10 +603,15 @@ fn export_iphone_backup_chat_html_file(
             media_type: media_type.to_owned(),
             base64_data: STANDARD.encode(bytes),
         });
-        embedded_media_bytes = embedded_media_bytes.saturating_add(size_bytes);
     }
 
-    write_chat_html_export(&imported, output_path, title, embedded_attachments)
+    write_chat_html_export(
+        &imported,
+        output_path,
+        title,
+        embedded_attachments,
+        skipped_message_count,
+    )
 }
 
 pub fn run() {
@@ -392,9 +620,12 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             list_iphone_backups,
+            choose_iphone_backup_folder,
             open_whatsapp_export,
             list_iphone_backup_chats,
+            search_iphone_backup_chats,
             import_iphone_backup_chat,
+            search_iphone_backup_chat,
             read_export_attachment_preview,
             read_iphone_backup_attachment_preview,
             export_whatsapp_export_html,
@@ -461,11 +692,31 @@ fn registered_export_path(
         })
 }
 
+fn register_backup_candidate_dtos(
+    registry: &SourceRegistryState,
+    candidates: &[BackupCandidate],
+) -> Result<Vec<IphoneBackupCandidateDto>, String> {
+    let mut registry = registry
+        .lock()
+        .map_err(|_| "Could not access local source handles.".to_owned())?;
+    registry.clear_backups();
+
+    Ok(candidates
+        .iter()
+        .enumerate()
+        .map(|(index, candidate)| {
+            let handle = registry.register_backup(index, PathBuf::from(&candidate.path));
+            backup_candidate_dto(candidate, index, handle)
+        })
+        .collect())
+}
+
 fn write_chat_html_export(
     imported: &ChatImport,
     output_path: &Path,
     title: &str,
     embedded_attachments: Vec<EmbeddedAttachment>,
+    skipped_message_count: usize,
 ) -> Result<HtmlExportResultDto, String> {
     let embedded_attachment_count = embedded_attachments.len();
     let html = build_chat_html_export(
@@ -483,7 +734,18 @@ fn write_chat_html_export(
             .attachments
             .len()
             .saturating_sub(embedded_attachment_count),
+        exported_message_count: imported.messages.len(),
+        skipped_message_count,
     })
+}
+
+fn select_iphone_backup_folder_path(app: &AppHandle) -> Result<Option<PathBuf>, String> {
+    app.dialog()
+        .file()
+        .set_title("Choose iPhone backup folder")
+        .blocking_pick_folder()
+        .map(file_path_to_path_buf)
+        .transpose()
 }
 
 fn select_whatsapp_export_path(app: &AppHandle) -> Result<Option<PathBuf>, String> {
@@ -575,14 +837,22 @@ fn read_iphone_backup_attachment_bytes(
     else {
         return Ok(None);
     };
-    let Ok(metadata) = fs::metadata(&media_path) else {
+
+    read_attachment_file_bytes(&media_path, max_size_bytes)
+}
+
+fn read_attachment_file_bytes(
+    media_path: &Path,
+    max_size_bytes: u64,
+) -> Result<Option<(Vec<u8>, u64)>, String> {
+    let Ok(metadata) = fs::metadata(media_path) else {
         return Ok(None);
     };
     if !metadata.is_file() || metadata.len() > max_size_bytes {
         return Ok(None);
     }
 
-    let Ok(bytes) = fs::read(&media_path) else {
+    let Ok(bytes) = fs::read(media_path) else {
         return Ok(None);
     };
     let size_bytes = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
@@ -596,12 +866,12 @@ fn read_iphone_backup_attachment_bytes(
 fn resolved_chat_storage_path(backup_path: &Path) -> Result<PathBuf, String> {
     let backup_root = backup_path;
     let manifest_db_path = backup_root.join("Manifest.db");
-    let whatsapp = find_whatsapp_manifest_files(&manifest_db_path)
-        .map_err(|_| "Could not inspect the selected iPhone backup manifest.".to_owned())?;
-    let chat_storage = whatsapp
-        .chat_storage
-        .as_ref()
-        .ok_or_else(|| "WhatsApp ChatStorage.sqlite was not found in this backup.".to_owned())?;
+    let chat_storage =
+        find_whatsapp_manifest_file_by_relative_path(&manifest_db_path, CHAT_STORAGE_RELATIVE_PATH)
+            .map_err(|_| "Could not inspect the selected iPhone backup manifest.".to_owned())?
+            .ok_or_else(|| {
+                "WhatsApp ChatStorage.sqlite was not found in this backup.".to_owned()
+            })?;
     let chat_storage_path = physical_backup_file_path(backup_root, &chat_storage.file_id);
 
     if !chat_storage_path.is_file() {
@@ -619,8 +889,13 @@ fn backup_candidate_dto(
     handle: String,
 ) -> IphoneBackupCandidateDto {
     let metadata = read_backup_metadata(candidate).unwrap_or_default();
-    let whatsapp = find_whatsapp_manifest_files(&candidate.manifest_db_path)
-        .map(whatsapp_backup_status)
+    let whatsapp = summarize_whatsapp_manifest_files(&candidate.manifest_db_path)
+        .map(|summary| WhatsappBackupStatusDto {
+            manifest_readable: true,
+            has_chat_storage: summary.has_chat_storage,
+            has_contacts: summary.has_contacts,
+            media_file_count: summary.media_file_count,
+        })
         .unwrap_or_else(|_| WhatsappBackupStatusDto {
             manifest_readable: false,
             has_chat_storage: false,
@@ -649,15 +924,6 @@ fn source_display_name(path: &Path) -> String {
         .filter(|name| !name.is_empty())
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| "Selected WhatsApp export".to_owned())
-}
-
-fn whatsapp_backup_status(files: WhatsappManifestFiles) -> WhatsappBackupStatusDto {
-    WhatsappBackupStatusDto {
-        manifest_readable: true,
-        has_chat_storage: files.chat_storage.is_some(),
-        has_contacts: files.contacts.is_some(),
-        media_file_count: files.media.len(),
-    }
 }
 
 fn backup_display_name(metadata: &BackupMetadata, index: usize) -> String {
@@ -691,15 +957,18 @@ mod tests {
     use std::{fs, io::Write, path::Path};
 
     use tempfile::tempdir;
-    use whatsvault_core::{media::attachment_media_type, AttachmentKind};
+    use whatsvault_core::{media::attachment_media_type, AttachmentKind, ImportIssueCode};
     use zip::write::SimpleFileOptions;
 
     use super::{
         backup_candidate_dto, backup_display_name, backup_product_label,
         export_iphone_backup_chat_html_file, export_whatsapp_export_html_file,
         import_iphone_backup_chat_from_path, list_iphone_backup_chats_from_path,
-        read_iphone_backup_attachment_preview_from_path, safe_html_default_filename,
-        source_display_name, PublicError, SourceRegistry,
+        read_iphone_backup_attachment_preview_from_path, register_backup_candidate_dtos,
+        safe_html_default_filename, search_iphone_backup_chat_from_path,
+        search_iphone_backup_chats_from_path, source_display_name, PublicError, SourceRegistry,
+        BACKUP_CHAT_IMPORT_MAX_MESSAGES, BACKUP_CHAT_LIST_MAX_ROWS, BACKUP_CHAT_SEARCH_MAX_RESULTS,
+        BACKUP_CHAT_SEARCH_MAX_ROWS, DEFAULT_WHATSAPP_EXPORT_IMPORT_MAX_MESSAGES,
     };
     use whatsvault_core::{BackupCandidate, BackupMetadata};
 
@@ -806,6 +1075,51 @@ mod tests {
     }
 
     #[test]
+    fn selected_backup_candidates_reuse_opaque_backup_handles() {
+        let root = tempdir().unwrap();
+        let backup_path = root.path().join("selected-device-backup");
+        fs::create_dir_all(&backup_path).unwrap();
+        let manifest_db_path = backup_path.join("Manifest.db");
+        rusqlite::Connection::open(&manifest_db_path)
+            .unwrap()
+            .execute_batch(
+                r#"
+                CREATE TABLE Files (
+                    fileID TEXT PRIMARY KEY,
+                    domain TEXT,
+                    relativePath TEXT,
+                    flags INTEGER,
+                    file BLOB
+                );
+                "#,
+            )
+            .unwrap();
+        let candidate = BackupCandidate {
+            id: "selected-device-backup".to_owned(),
+            path: backup_path.to_string_lossy().into_owned(),
+            manifest_db_path: manifest_db_path.to_string_lossy().into_owned(),
+            manifest_plist_path: None,
+            info_plist_path: None,
+            status_plist_path: None,
+        };
+        let registry = std::sync::Mutex::new(SourceRegistry::default());
+
+        let dtos = register_backup_candidate_dtos(&registry, &[candidate]).unwrap();
+
+        assert_eq!(dtos.len(), 1);
+        assert_eq!(dtos[0].handle, "backup-source-1");
+        assert!(!dtos[0].handle.contains("selected-device-backup"));
+        assert_eq!(
+            registry
+                .lock()
+                .unwrap()
+                .backup_path("backup-source-1")
+                .as_deref(),
+            Some(backup_path.as_path())
+        );
+    }
+
+    #[test]
     fn source_display_name_uses_only_the_selected_filename() {
         let display_name = source_display_name(Path::new(
             "/Users/example/Downloads/WhatsApp Chat - Family.zip",
@@ -847,12 +1161,102 @@ mod tests {
         let root = tempdir().unwrap();
         let backup_path = create_synthetic_backup_with_chat_storage(root.path());
 
-        let chats = list_iphone_backup_chats_from_path(&backup_path).unwrap();
+        let result = list_iphone_backup_chats_from_path(&backup_path).unwrap();
+        let chats = result.chats;
 
         assert_eq!(chats.len(), 1);
+        assert!(!result.is_truncated);
+        assert_eq!(result.limit, BACKUP_CHAT_LIST_MAX_ROWS);
         assert_eq!(chats[0].id, "1");
         assert_eq!(chats[0].title, "Backup Chat");
         assert_eq!(chats[0].message_count, 2);
+    }
+
+    #[test]
+    fn lists_iphone_backup_chats_with_visible_bound_for_large_backups() {
+        let root = tempdir().unwrap();
+        let backup_path =
+            create_synthetic_backup_with_many_chats(root.path(), BACKUP_CHAT_LIST_MAX_ROWS + 7);
+
+        let result = list_iphone_backup_chats_from_path(&backup_path).unwrap();
+
+        assert_eq!(result.chats.len(), BACKUP_CHAT_LIST_MAX_ROWS);
+        assert!(result.is_truncated);
+        assert_eq!(result.limit, BACKUP_CHAT_LIST_MAX_ROWS);
+    }
+
+    #[test]
+    fn searches_iphone_backup_chats_outside_visible_chat_list_window() {
+        let root = tempdir().unwrap();
+        let backup_path =
+            create_synthetic_backup_with_search_target(root.path(), BACKUP_CHAT_LIST_MAX_ROWS + 7);
+
+        let listed = list_iphone_backup_chats_from_path(&backup_path).unwrap();
+        let searched = search_iphone_backup_chats_from_path(&backup_path, "needle").unwrap();
+
+        assert!(listed.is_truncated);
+        assert!(!listed
+            .chats
+            .iter()
+            .any(|chat| chat.title == "Needle Archive"));
+        assert_eq!(searched.chats.len(), 1);
+        assert_eq!(searched.chats[0].title, "Needle Archive");
+        assert!(!searched.is_truncated);
+        assert_eq!(searched.limit, BACKUP_CHAT_SEARCH_MAX_ROWS);
+    }
+
+    #[test]
+    fn searches_iphone_backup_chats_with_visible_bound_for_broad_queries() {
+        let root = tempdir().unwrap();
+        let backup_path = create_synthetic_backup_with_search_target(
+            root.path(),
+            BACKUP_CHAT_SEARCH_MAX_ROWS + 7,
+        );
+
+        let result = search_iphone_backup_chats_from_path(&backup_path, "Recent Chat").unwrap();
+
+        assert_eq!(result.chats.len(), BACKUP_CHAT_SEARCH_MAX_ROWS);
+        assert!(result.is_truncated);
+        assert_eq!(result.limit, BACKUP_CHAT_SEARCH_MAX_ROWS);
+    }
+
+    #[test]
+    fn serializes_iphone_backup_chat_summaries_for_react_without_snake_case_drift() {
+        let root = tempdir().unwrap();
+        let backup_path = create_synthetic_backup_with_chat_storage(root.path());
+
+        let result = list_iphone_backup_chats_from_path(&backup_path).unwrap();
+        let serialized = serde_json::to_string(&result).unwrap();
+
+        assert!(serialized.contains("chats"));
+        assert!(serialized.contains("isTruncated"));
+        assert!(serialized.contains("latestMessage"));
+        assert!(serialized.contains("latestMessageTimestamp"));
+        assert!(serialized.contains("messageCount"));
+        assert!(serialized.contains("attachmentCount"));
+        assert!(!serialized.contains("latest_message"));
+        assert!(!serialized.contains("message_count"));
+    }
+
+    #[test]
+    fn serializes_iphone_backup_chat_search_for_react_without_snake_case_drift() {
+        let root = tempdir().unwrap();
+        let backup_path = create_synthetic_backup_with_search_target(
+            root.path(),
+            BACKUP_CHAT_SEARCH_MAX_ROWS + 7,
+        );
+
+        let result = search_iphone_backup_chats_from_path(&backup_path, "Recent Chat").unwrap();
+        let serialized = serde_json::to_string(&result).unwrap();
+
+        assert!(serialized.contains("chats"));
+        assert!(serialized.contains("isTruncated"));
+        assert!(serialized.contains("latestMessage"));
+        assert!(serialized.contains("messageCount"));
+        assert!(serialized.contains("attachmentCount"));
+        assert!(!serialized.contains("is_truncated"));
+        assert!(!serialized.contains("latest_message"));
+        assert!(!serialized.contains("message_count"));
     }
 
     #[test]
@@ -866,6 +1270,80 @@ mod tests {
         assert_eq!(imported.messages.len(), 2);
         assert_eq!(imported.messages[0].body, "hello from backup");
         assert_eq!(imported.messages[1].sender.as_deref(), Some("You"));
+    }
+
+    #[test]
+    fn imports_bounded_recent_iphone_backup_chat_window_for_large_threads() {
+        let root = tempdir().unwrap();
+        let message_count = BACKUP_CHAT_IMPORT_MAX_MESSAGES + 3;
+        let backup_path = create_synthetic_backup_with_large_chat(root.path(), message_count);
+
+        let imported = import_iphone_backup_chat_from_path(&backup_path, "1").unwrap();
+
+        assert_eq!(imported.messages.len(), BACKUP_CHAT_IMPORT_MAX_MESSAGES);
+        assert_eq!(imported.issues.len(), 1);
+        assert_eq!(
+            imported.issues[0].code,
+            ImportIssueCode::MessageWindowTruncated
+        );
+        assert!(imported.issues[0].message.contains("latest 2000 messages"));
+        let first_expected = format!(
+            "message {}",
+            message_count - BACKUP_CHAT_IMPORT_MAX_MESSAGES + 1
+        );
+        let last_expected = format!("message {message_count}");
+        assert_eq!(imported.messages[0].body, first_expected);
+        assert_eq!(
+            imported
+                .messages
+                .last()
+                .map(|message| message.body.as_str()),
+            Some(last_expected.as_str())
+        );
+    }
+
+    #[test]
+    fn searches_iphone_backup_chat_from_resolved_chat_storage() {
+        let root = tempdir().unwrap();
+        let message_count = BACKUP_CHAT_SEARCH_MAX_RESULTS + 3;
+        let backup_path = create_synthetic_backup_with_large_chat(root.path(), message_count);
+
+        let result = search_iphone_backup_chat_from_path(&backup_path, "1", "message").unwrap();
+
+        assert_eq!(
+            result.imported.messages.len(),
+            BACKUP_CHAT_SEARCH_MAX_RESULTS
+        );
+        assert!(result.is_truncated);
+        assert_eq!(result.limit, BACKUP_CHAT_SEARCH_MAX_RESULTS);
+        assert_eq!(
+            result.imported.issues[0].code,
+            ImportIssueCode::SearchResultsTruncated
+        );
+        assert_eq!(result.imported.messages[0].body, "message 4");
+        let last_expected = format!("message {message_count}");
+        assert_eq!(
+            result
+                .imported
+                .messages
+                .last()
+                .map(|message| message.body.as_str()),
+            Some(last_expected.as_str())
+        );
+    }
+
+    #[test]
+    fn serializes_iphone_backup_search_results_for_react_without_snake_case_drift() {
+        let root = tempdir().unwrap();
+        let backup_path = create_synthetic_backup_with_chat_storage(root.path());
+
+        let result = search_iphone_backup_chat_from_path(&backup_path, "1", "backup").unwrap();
+        let serialized = serde_json::to_string(&result).unwrap();
+
+        assert!(serialized.contains("imported"));
+        assert!(serialized.contains("isTruncated"));
+        assert!(serialized.contains("limit"));
+        assert!(!serialized.contains("is_truncated"));
     }
 
     #[test]
@@ -919,10 +1397,33 @@ mod tests {
 
         assert_eq!(result.embedded_attachment_count, 1);
         assert_eq!(result.skipped_attachment_count, 0);
+        assert_eq!(result.exported_message_count, 2);
+        assert_eq!(result.skipped_message_count, 0);
         assert!(!format!("{result:?}").contains(output_path.to_str().unwrap()));
         assert!(html.contains("<title>Backup Chat</title>"));
         assert!(html.contains("data:image/jpeg;base64,ZmFrZSBiYWNrdXAgaW1hZ2U="));
         assert!(html.contains("photo attached"));
+    }
+
+    #[test]
+    fn exports_iphone_backup_chat_html_with_bounded_recent_messages() {
+        let root = tempdir().unwrap();
+        let message_count = BACKUP_CHAT_IMPORT_MAX_MESSAGES + 3;
+        let backup_path = create_synthetic_backup_with_large_chat(root.path(), message_count);
+        let output_path = root.path().join("large-backup-chat.html");
+
+        let result =
+            export_iphone_backup_chat_html_file(&backup_path, "1", &output_path, "Large Chat")
+                .unwrap();
+        let html = fs::read_to_string(&output_path).unwrap();
+
+        assert_eq!(
+            result.exported_message_count,
+            BACKUP_CHAT_IMPORT_MAX_MESSAGES
+        );
+        assert_eq!(result.skipped_message_count, 3);
+        assert!(!html.contains("<p class=\"message-body\">message 1</p>"));
+        assert!(html.contains(&format!("message {message_count}")));
     }
 
     #[test]
@@ -938,9 +1439,32 @@ mod tests {
 
         assert_eq!(result.embedded_attachment_count, 1);
         assert_eq!(result.skipped_attachment_count, 0);
+        assert_eq!(result.exported_message_count, 2);
+        assert_eq!(result.skipped_message_count, 0);
         assert!(html.contains("<title>Exported chat</title>"));
         assert!(html.contains("data:image/jpeg;base64,ZmFrZSBpbWFnZQ=="));
         assert!(html.contains("hello"));
+    }
+
+    #[test]
+    fn exports_whatsapp_zip_html_with_bounded_recent_messages() {
+        let root = tempdir().unwrap();
+        let source_path = root.path().join("large-chat.zip");
+        let output_path = root.path().join("large-chat.html");
+        let message_count = DEFAULT_WHATSAPP_EXPORT_IMPORT_MAX_MESSAGES + 3;
+        create_synthetic_large_export_zip(&source_path, message_count);
+
+        let result =
+            export_whatsapp_export_html_file(&source_path, &output_path, "Large Export").unwrap();
+        let html = fs::read_to_string(&output_path).unwrap();
+
+        assert_eq!(
+            result.exported_message_count,
+            DEFAULT_WHATSAPP_EXPORT_IMPORT_MAX_MESSAGES
+        );
+        assert_eq!(result.skipped_message_count, 3);
+        assert!(!html.contains("<p class=\"message-body\">message 1</p>"));
+        assert!(html.contains(&format!("message {message_count}")));
     }
 
     fn create_synthetic_export_zip(path: &Path) {
@@ -963,6 +1487,24 @@ mod tests {
             .start_file("00000001-PHOTO-2026-06-23-09-16-00.jpg", options)
             .unwrap();
         writer.write_all(b"fake image").unwrap();
+        writer.finish().unwrap();
+    }
+
+    fn create_synthetic_large_export_zip(path: &Path, message_count: usize) {
+        let file = fs::File::create(path).unwrap();
+        let mut writer = zip::ZipWriter::new(file);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+
+        writer.start_file("_chat.txt", options).unwrap();
+        for index in 1..=message_count {
+            writeln!(
+                writer,
+                "[06/23/2026, 09:15:{:02}] Ana: message {index}",
+                index % 60
+            )
+            .unwrap();
+        }
         writer.finish().unwrap();
     }
 
@@ -1027,6 +1569,57 @@ mod tests {
                 ),
             )
             .unwrap();
+
+        backup_path
+    }
+
+    fn create_synthetic_backup_with_large_chat(
+        root: &Path,
+        message_count: usize,
+    ) -> std::path::PathBuf {
+        let chat_storage_file_id = "synthetic-chat-storage-file-id";
+        let backup_path = root.join("synthetic-device-backup-with-large-chat");
+
+        fs::create_dir_all(backup_path.join("sy")).unwrap();
+        create_manifest_db(&backup_path.join("Manifest.db"), chat_storage_file_id);
+        create_large_chat_storage(
+            &backup_path.join("sy").join(chat_storage_file_id),
+            message_count,
+        );
+
+        backup_path
+    }
+
+    fn create_synthetic_backup_with_many_chats(
+        root: &Path,
+        chat_count: usize,
+    ) -> std::path::PathBuf {
+        let chat_storage_file_id = "synthetic-chat-storage-file-id";
+        let backup_path = root.join("synthetic-device-backup-with-many-chats");
+
+        fs::create_dir_all(backup_path.join("sy")).unwrap();
+        create_manifest_db(&backup_path.join("Manifest.db"), chat_storage_file_id);
+        create_many_chat_storage(
+            &backup_path.join("sy").join(chat_storage_file_id),
+            chat_count,
+        );
+
+        backup_path
+    }
+
+    fn create_synthetic_backup_with_search_target(
+        root: &Path,
+        recent_chat_count: usize,
+    ) -> std::path::PathBuf {
+        let chat_storage_file_id = "synthetic-chat-storage-file-id";
+        let backup_path = root.join("synthetic-device-backup-with-searchable-chats");
+
+        fs::create_dir_all(backup_path.join("sy")).unwrap();
+        create_manifest_db(&backup_path.join("Manifest.db"), chat_storage_file_id);
+        create_searchable_chat_storage(
+            &backup_path.join("sy").join(chat_storage_file_id),
+            recent_chat_count,
+        );
 
         backup_path
     }
@@ -1145,5 +1738,149 @@ mod tests {
                 "#,
             )
             .unwrap();
+    }
+
+    fn create_large_chat_storage(path: &Path, message_count: usize) {
+        let mut connection = rusqlite::Connection::open(path).unwrap();
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE ZWACHATSESSION (
+                    Z_PK INTEGER PRIMARY KEY,
+                    ZCONTACTJID TEXT,
+                    ZPARTNERNAME TEXT,
+                    ZMESSAGECOUNTER INTEGER,
+                    ZLASTMESSAGEDATE REAL
+                );
+                CREATE TABLE ZWAMESSAGE (
+                    Z_PK INTEGER PRIMARY KEY,
+                    ZCHATSESSION INTEGER,
+                    ZSORT INTEGER,
+                    ZISFROMME INTEGER,
+                    ZMESSAGEDATE REAL,
+                    ZTEXT TEXT,
+                    ZFROMJID TEXT
+                );
+
+                INSERT INTO ZWACHATSESSION
+                    (Z_PK, ZCONTACTJID, ZPARTNERNAME, ZMESSAGECOUNTER, ZLASTMESSAGEDATE)
+                VALUES
+                    (1, 'large-chat@s.whatsapp.net', 'Large Chat', 0, 0);
+                "#,
+            )
+            .unwrap();
+
+        let transaction = connection.transaction().unwrap();
+        {
+            let mut statement = transaction
+                .prepare(
+                    r#"
+                    INSERT INTO ZWAMESSAGE
+                        (Z_PK, ZCHATSESSION, ZSORT, ZISFROMME, ZMESSAGEDATE, ZTEXT, ZFROMJID)
+                    VALUES (?1, 1, ?1, 0, ?1, ?2, 'friend@s.whatsapp.net')
+                    "#,
+                )
+                .unwrap();
+
+            for index in 1..=message_count {
+                statement
+                    .execute((index as i64, format!("message {index}")))
+                    .unwrap();
+            }
+        }
+        transaction.commit().unwrap();
+    }
+
+    fn create_many_chat_storage(path: &Path, chat_count: usize) {
+        let mut connection = rusqlite::Connection::open(path).unwrap();
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE ZWACHATSESSION (
+                    Z_PK INTEGER PRIMARY KEY,
+                    ZCONTACTJID TEXT,
+                    ZPARTNERNAME TEXT,
+                    ZMESSAGECOUNTER INTEGER,
+                    ZLASTMESSAGEDATE REAL
+                );
+                "#,
+            )
+            .unwrap();
+
+        let transaction = connection.transaction().unwrap();
+        {
+            let mut statement = transaction
+                .prepare(
+                    r#"
+                    INSERT INTO ZWACHATSESSION
+                        (Z_PK, ZCONTACTJID, ZPARTNERNAME, ZMESSAGECOUNTER, ZLASTMESSAGEDATE)
+                    VALUES (?1, ?2, ?3, 1, ?1)
+                    "#,
+                )
+                .unwrap();
+
+            for index in 1..=chat_count {
+                statement
+                    .execute((
+                        index as i64,
+                        format!("chat-{index}@s.whatsapp.net"),
+                        format!("Chat {index}"),
+                    ))
+                    .unwrap();
+            }
+        }
+        transaction.commit().unwrap();
+    }
+
+    fn create_searchable_chat_storage(path: &Path, recent_chat_count: usize) {
+        let mut connection = rusqlite::Connection::open(path).unwrap();
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE ZWACHATSESSION (
+                    Z_PK INTEGER PRIMARY KEY,
+                    ZCONTACTJID TEXT,
+                    ZPARTNERNAME TEXT,
+                    ZMESSAGECOUNTER INTEGER,
+                    ZLASTMESSAGEDATE REAL
+                );
+                "#,
+            )
+            .unwrap();
+
+        let transaction = connection.transaction().unwrap();
+        {
+            let mut statement = transaction
+                .prepare(
+                    r#"
+                    INSERT INTO ZWACHATSESSION
+                        (Z_PK, ZCONTACTJID, ZPARTNERNAME, ZMESSAGECOUNTER, ZLASTMESSAGEDATE)
+                    VALUES (?1, ?2, ?3, 1, ?4)
+                    "#,
+                )
+                .unwrap();
+
+            for index in 1..=recent_chat_count {
+                statement
+                    .execute((
+                        index as i64,
+                        format!("recent-chat-{index}@s.whatsapp.net"),
+                        format!("Recent Chat {index}"),
+                        index as i64,
+                    ))
+                    .unwrap();
+            }
+
+            let target_index = recent_chat_count + 1;
+            statement
+                .execute((
+                    target_index as i64,
+                    "needle-archive@s.whatsapp.net".to_owned(),
+                    "Needle Archive".to_owned(),
+                    0_i64,
+                ))
+                .unwrap();
+        }
+        transaction.commit().unwrap();
     }
 }

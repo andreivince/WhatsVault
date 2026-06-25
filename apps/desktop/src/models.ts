@@ -16,6 +16,18 @@ export interface Chat {
   attachmentCount: number;
 }
 
+export interface IphoneBackupChatsResult {
+  chats: Chat[];
+  isTruncated: boolean;
+  limit: number;
+}
+
+export interface IphoneBackupChatSearchResult {
+  imported: ChatImport;
+  isTruncated: boolean;
+  limit: number;
+}
+
 export interface IphoneBackupCandidate {
   handle: string;
   displayName: string;
@@ -87,4 +99,6 @@ export interface AttachmentPreview {
 export interface HtmlExportResult {
   embeddedAttachmentCount: number;
   skippedAttachmentCount: number;
+  exportedMessageCount: number;
+  skippedMessageCount: number;
 }

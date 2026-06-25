@@ -60,6 +60,10 @@ jobs:
         working-directory: apps/desktop
         run: npm run hygiene:public
 
+      - name: Check release readiness honesty
+        working-directory: apps/desktop
+        run: npm run release:readiness
+
       - name: Build desktop frontend
         working-directory: apps/desktop
         run: npm run build
