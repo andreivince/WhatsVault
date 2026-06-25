@@ -1,0 +1,55 @@
+name: Backup not detected
+description: Report a local iPhone backup that WhatsVault cannot find or open.
+title: "[Backup]: "
+labels: ["bug", "backup"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste message bodies, contact names, phone numbers, backup IDs, file IDs, full local paths, or raw database contents.
+        Use counts, yes/no answers, and redacted paths only.
+  - type: dropdown
+    id: operating-system
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Windows
+    validations:
+      required: true
+  - type: dropdown
+    id: backup-source
+    attributes:
+      label: Backup source
+      options:
+        - Finder or Apple Devices
+        - iTunes
+        - Unknown
+    validations:
+      required: true
+  - type: dropdown
+    id: encryption
+    attributes:
+      label: Backup encryption
+      options:
+        - Not encrypted
+        - Encrypted
+        - Unknown
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: What happened?
+      description: Describe the visible app state without including private chat or backup identifiers.
+      placeholder: "Example: WhatsVault shows no backups even though Finder lists one local backup."
+    validations:
+      required: true
+  - type: textarea
+    id: safe-evidence
+    attributes:
+      label: Safe evidence
+      description: Share redacted counts or screenshots only. Blur names, phone numbers, paths, and message content.
+      placeholder: "Example: Backup folder exists: yes. Manifest.db exists: yes. WhatsApp app installed on device: yes."
+    validations:
+      required: false

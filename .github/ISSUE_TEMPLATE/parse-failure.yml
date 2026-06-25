@@ -1,0 +1,44 @@
+name: Parse failure
+description: Report an import or export that fails before the chat is usable.
+title: "[Parse]: "
+labels: ["bug", "parser"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please redact private data. Do not paste message text, contact identifiers, raw database rows, full local paths, or backup file IDs.
+  - type: dropdown
+    id: source-type
+    attributes:
+      label: Source type
+      options:
+        - WhatsApp export ZIP
+        - iPhone backup
+        - Unknown
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open WhatsVault.
+        2. Choose a local source.
+        3. The import fails with the redacted error below.
+    validations:
+      required: true
+  - type: textarea
+    id: redacted-error
+    attributes:
+      label: Redacted error text
+      description: Remove names, phone numbers, full paths, message bodies, backup IDs, file IDs, and filenames that reveal private content.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: safe-context
+    attributes:
+      label: Safe context
+      description: Include app version, operating system, WhatsApp export type, extension counts, or synthetic fixture details.
+    validations:
+      required: false

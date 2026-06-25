@@ -1,0 +1,31 @@
+name: Feature request
+description: Suggest a product improvement for the local desktop viewer.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What workflow should WhatsVault make easier?
+      placeholder: "Example: I need to jump to a date inside a long chat."
+    validations:
+      required: true
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed solution
+      description: Describe the user-facing behavior. Keep private chat examples out of the issue.
+    validations:
+      required: true
+  - type: dropdown
+    id: source-type
+    attributes:
+      label: Source type
+      options:
+        - iPhone backup
+        - WhatsApp export ZIP
+        - Both
+        - Not source-specific
+    validations:
+      required: true

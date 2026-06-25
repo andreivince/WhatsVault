@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  quality:
+    name: Quality checks
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup default stable
+
+      - name: Install desktop dependencies
+        working-directory: apps/desktop
+        run: npm ci
+
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lint Rust workspace
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test Rust workspace
+        run: cargo test --workspace
+
+      - name: Test desktop frontend
+        working-directory: apps/desktop
+        run: npm test
+
+      - name: Build desktop frontend
+        working-directory: apps/desktop
+        run: npm run build
+
+      - name: Audit desktop dependencies
+        working-directory: apps/desktop
+        run: npm audit --audit-level=low
+
+  desktop-bundle-smoke:
+    name: Tauri bundle smoke (${{ matrix.label }})
+    needs: quality
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macOS Apple Silicon
+            os: macos-latest
+            args: --target aarch64-apple-darwin
+            checksum_manifest: WhatsVault_macos-aarch64_SHA256SUMS.txt
+            rust_targets: aarch64-apple-darwin
+          - label: macOS Intel
+            os: macos-latest
+            args: --target x86_64-apple-darwin
+            checksum_manifest: WhatsVault_macos-x86_64_SHA256SUMS.txt
+            rust_targets: x86_64-apple-darwin
+          - label: Windows
+            os: windows-latest
+            args: ""
+            checksum_manifest: WhatsVault_windows-x86_64_SHA256SUMS.txt
+            rust_targets: ""
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Add Rust build target
+        if: matrix.rust_targets != ''
+        run: rustup target add ${{ matrix.rust_targets }}
+
+      - name: Install desktop dependencies
+        working-directory: apps/desktop
+        run: npm ci
+
+      - name: Build Tauri desktop bundle
+        uses: tauri-apps/tauri-action@v0.6.2
+        with:
+          projectPath: apps/desktop
+          tauriScript: npm run tauri
+          args: ${{ matrix.args }}
+
+      - name: Generate bundle checksums
+        working-directory: apps/desktop
+        env:
+          WHATSVAULT_CHECKSUM_MANIFEST: ${{ matrix.checksum_manifest }}
+        run: npm run release:checksums

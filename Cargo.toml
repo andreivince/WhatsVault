@@ -1,0 +1,13 @@
+[workspace]
+members = [
+  "apps/desktop/src-tauri",
+  "crates/whatsvault-core",
+  "crates/whatsvault-proof",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/andreivince/WhatsVault"
+rust-version = "1.82"

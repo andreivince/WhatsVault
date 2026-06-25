@@ -1,0 +1,37 @@
+# macOS
+.DS_Store
+
+# Dependencies and build output
+node_modules/
+dist/
+dist-ssr/
+coverage/
+test-results/
+playwright-report/
+
+# Tauri / Rust
+src-tauri/target/
+target/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# Private WhatsApp/iOS data. Do not commit real chats, backups, databases, or media exports.
+data/
+private/
+fixtures/private/
+*.zip
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.plist
+
+# Local generated artifacts
+output/
+*.log
+*.tmp
+*.bak

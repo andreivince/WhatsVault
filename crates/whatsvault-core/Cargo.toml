@@ -1,0 +1,18 @@
+[package]
+name = "whatsvault-core"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+base64 = "0.22"
+plist = "1.9"
+rusqlite = { version = "0.39", features = ["bundled"] }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0"
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tempfile = "3.23"

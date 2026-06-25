@@ -1,0 +1,44 @@
+name: Media missing
+description: Report missing or unpreviewable media in an imported chat.
+title: "[Media]: "
+labels: ["bug", "media"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not upload private media. Use synthetic samples when possible, or describe the media type and counts.
+  - type: dropdown
+    id: source-type
+    attributes:
+      label: Source type
+      options:
+        - WhatsApp export ZIP
+        - iPhone backup
+        - Unknown
+    validations:
+      required: true
+  - type: checkboxes
+    id: media-types
+    attributes:
+      label: Affected media types
+      options:
+        - label: Images or stickers
+        - label: Videos
+        - label: Audio or voice notes
+        - label: Documents or PDFs
+        - label: Unknown attachment type
+  - type: textarea
+    id: observed
+    attributes:
+      label: What happened?
+      placeholder: "Example: The chat imports, but image attachments show as unavailable placeholders."
+    validations:
+      required: true
+  - type: textarea
+    id: safe-details
+    attributes:
+      label: Safe details
+      description: Include sanitized counts, file extensions, and app version. Do not include filenames if they reveal private content.
+      placeholder: "Example: 24 .jpg files, 3 .mp4 files, all below 8 MB preview limit."
+    validations:
+      required: false

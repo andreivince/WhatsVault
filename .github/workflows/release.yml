@@ -1,0 +1,107 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  tauri-release:
+    name: Build release (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macOS Apple Silicon
+            os: macos-latest
+            args: --target aarch64-apple-darwin
+            checksum_manifest: WhatsVault_macos-aarch64_SHA256SUMS.txt
+            rust_targets: aarch64-apple-darwin x86_64-apple-darwin
+          - label: macOS Intel
+            os: macos-latest
+            args: --target x86_64-apple-darwin
+            checksum_manifest: WhatsVault_macos-x86_64_SHA256SUMS.txt
+            rust_targets: aarch64-apple-darwin x86_64-apple-darwin
+          - label: Windows
+            os: windows-latest
+            args: ""
+            checksum_manifest: WhatsVault_windows-x86_64_SHA256SUMS.txt
+            rust_targets: ""
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install Rust stable
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Add macOS Rust targets
+        if: matrix.rust_targets != ''
+        run: rustup target add ${{ matrix.rust_targets }}
+
+      - name: Install desktop dependencies
+        working-directory: apps/desktop
+        run: npm ci
+
+      - name: Read app release version
+        id: release-version
+        working-directory: apps/desktop
+        run: npm run release:version
+
+      - name: Verify tag matches app version
+        env:
+          WHATSVAULT_EXPECTED_TAG: ${{ steps.release-version.outputs.tag }}
+        run: node -e "if (process.env.GITHUB_REF_TYPE === 'tag' && process.env.GITHUB_REF_NAME !== process.env.WHATSVAULT_EXPECTED_TAG) { throw new Error('Release tag ' + process.env.GITHUB_REF_NAME + ' does not match app version tag ' + process.env.WHATSVAULT_EXPECTED_TAG); }"
+
+      - name: Build and upload Tauri artifacts
+        uses: tauri-apps/tauri-action@v0.6.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/desktop
+          tauriScript: npm run tauri
+          args: ${{ matrix.args }}
+          tagName: v__VERSION__
+          releaseName: WhatsVault v__VERSION__
+          releaseBody: |
+            Pre-alpha WhatsVault desktop release.
+
+            Known limits:
+            - WhatsApp export ZIP viewing is available.
+            - iPhone backup browsing is still in proof work.
+            - macOS and Windows bundles are unsigned until signing is configured.
+          releaseDraft: true
+          prerelease: true
+
+      - name: Generate release checksums
+        working-directory: apps/desktop
+        env:
+          WHATSVAULT_CHECKSUM_MANIFEST: ${{ matrix.checksum_manifest }}
+        run: npm run release:checksums
+
+      - name: Upload release checksums
+        working-directory: apps/desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ steps.release-version.outputs.tag }}" "../../target/release/release-metadata/${{ matrix.checksum_manifest }}" --clobber

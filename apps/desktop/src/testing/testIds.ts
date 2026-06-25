@@ -1,0 +1,16 @@
+export const TEST_IDS = {
+  appShell: "app-shell",
+  chatTitle: "chat-title",
+  conversationHeader: "conversation-header",
+  messageCanvas: "message-canvas",
+  searchInput: "search-input",
+  dateFilterInput: "date-filter-input",
+  exportButton: "export-button",
+  openSourceButton: "open-source-button",
+  sourceOverview: "source-overview",
+  supportedSourceCard: "supported-source-card",
+  proofSourceCard: "proof-source-card",
+  mediaBlock: "media-block",
+  messageBubble: "message-bubble",
+  showEarlierButton: "show-earlier-button",
+} as const;

@@ -1,0 +1,26 @@
+[package]
+name = "whatsvault-desktop"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "whatsvault_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+base64 = "0.22"
+serde = { version = "1.0", features = ["derive"] }
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+whatsvault-core = { path = "../../../crates/whatsvault-core" }
+
+[dev-dependencies]
+rusqlite = { version = "0.39", features = ["bundled"] }
+tempfile = "3.23"
+zip = { version = "8.6", default-features = false, features = ["deflate"] }

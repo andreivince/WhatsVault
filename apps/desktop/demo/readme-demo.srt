@@ -1,0 +1,15 @@
+1
+00:00:00,000 --> 00:00:05,000
+WhatsVault opens directly into a local WhatsApp chat viewer.
+
+2
+00:00:05,000 --> 00:00:10,000
+Search works across the loaded conversation without uploading messages.
+
+3
+00:00:10,000 --> 00:00:15,000
+Media attachments stay visible in the chat timeline.
+
+4
+00:00:15,000 --> 00:00:20,000
+The selected chat can be exported to a self-contained HTML file.
