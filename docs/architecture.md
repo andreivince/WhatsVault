@@ -175,6 +175,7 @@ Current modules:
 - `sources::iphone_backup`: backup-root discovery, `Manifest.db` mapping, and fileID-to-physical-file resolution.
 - `sources::whatsapp_export_zip`: WhatsApp mobile export ZIP parsing, latest-message windowing for large transcripts, media classification, reference resolution, and bounded attachment payload lookup.
 - `whatsapp::chat_storage`: read-only `ChatStorage.sqlite` summary, chat-listing, chat-list search, selected-chat import, and selected-chat search logic. It adapts to missing optional columns and returns source-neutral `Chat` and `ChatImport` models. Chat-list summaries and chat-list search use bounded result sets and set-based aggregate queries, while selected-chat search returns bounded latest matches, so large backups do not require repeated unbounded scans or UI-sized message loads.
+- `whatsapp::chat_storage_display`: private helper boundary for display-safe chat titles, message text, sender names, and media filenames derived from `ChatStorage.sqlite` rows. This keeps privacy-preserving normalization centralized instead of spreading identifier-redaction rules through query code.
 
 The Tauri shell should call this core crate instead of reimplementing parser rules in frontend code.
 

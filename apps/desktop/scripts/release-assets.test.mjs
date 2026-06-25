@@ -3,7 +3,11 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { findReleaseBundles, writeChecksumManifest } from "./release-assets.mjs";
+import {
+  findReleaseBundles,
+  findReleaseBundlesFromRoots,
+  writeChecksumManifest,
+} from "./release-assets.mjs";
 
 const tempRoots = [];
 
@@ -44,6 +48,29 @@ describe("release asset helpers", () => {
 
     const result = await writeChecksumManifest({
       bundleDir: join(root, "bundle"),
+      outputDir,
+    });
+
+    await expect(readFile(result.manifestPath, "utf8")).resolves.toBe(
+      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad  WhatsVault_0.1.0_aarch64.dmg\n",
+    );
+    expect(result.bundleCount).toBe(1);
+  });
+
+  it("writes a SHA-256 manifest across target-specific Tauri bundle roots", async () => {
+    const root = await tempRoot();
+    const defaultBundleDir = join(root, "target", "release", "bundle");
+    const targetedBundleDir = join(root, "target", "aarch64-apple-darwin", "release", "bundle");
+    const outputDir = join(root, "release-metadata");
+    await mkdir(join(targetedBundleDir, "dmg"), { recursive: true });
+    await writeFile(join(targetedBundleDir, "dmg", "WhatsVault_0.1.0_aarch64.dmg"), "abc");
+
+    await expect(findReleaseBundlesFromRoots([defaultBundleDir, targetedBundleDir])).resolves.toEqual([
+      join(targetedBundleDir, "dmg", "WhatsVault_0.1.0_aarch64.dmg"),
+    ]);
+
+    const result = await writeChecksumManifest({
+      bundleDirs: [defaultBundleDir, targetedBundleDir],
       outputDir,
     });
 

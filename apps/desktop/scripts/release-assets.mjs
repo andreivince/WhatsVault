@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, readdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, writeFile } from "node:fs/promises";
 import { basename, join, relative, resolve } from "node:path";
 
 const bundleExtensions = [
@@ -24,22 +24,41 @@ export async function findReleaseBundles(bundleDir) {
     .sort((left, right) => relative(root, left).localeCompare(relative(root, right)));
 }
 
+export async function findReleaseBundlesFromRoots(bundleDirs) {
+  const roots = [...new Set(bundleDirs.map((bundleDir) => resolve(bundleDir)))];
+  const bundleGroups = await Promise.all(
+    roots.map(async (root) => {
+      if (!(await pathExists(root))) {
+        return [];
+      }
+
+      return findReleaseBundles(root);
+    }),
+  );
+
+  return bundleGroups
+    .flat()
+    .sort((left, right) => basename(left).localeCompare(basename(right)) || left.localeCompare(right));
+}
+
 export async function writeChecksumManifest({
   bundleDir,
+  bundleDirs,
   outputDir,
   manifestName = "SHA256SUMS.txt",
 } = {}) {
-  if (!bundleDir) {
-    throw new Error("bundleDir is required.");
+  const roots = bundleDirs ?? (bundleDir ? [bundleDir] : []);
+  if (roots.length === 0) {
+    throw new Error("bundleDir or bundleDirs is required.");
   }
 
   if (!outputDir) {
     throw new Error("outputDir is required.");
   }
 
-  const bundles = await findReleaseBundles(bundleDir);
+  const bundles = await findReleaseBundlesFromRoots(roots);
   if (bundles.length === 0) {
-    throw new Error(`No release bundle files found in ${bundleDir}.`);
+    throw new Error(`No release bundle files found in ${roots.join(", ")}.`);
   }
 
   const lines = [];
@@ -76,6 +95,18 @@ async function collectFiles(root) {
   }
 
   return files;
+}
+
+async function pathExists(path) {
+  try {
+    await access(path);
+    return true;
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
 }
 
 function isReleaseBundle(filePath) {

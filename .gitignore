@@ -35,3 +35,6 @@ output/
 *.log
 *.tmp
 *.bak
+
+# Local privacy scanner scratch files
+apps/desktop/demo/private-text-pattern.txt
