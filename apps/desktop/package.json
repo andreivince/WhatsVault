@@ -13,6 +13,7 @@
     "demo:render": "node scripts/render-readme-demo.mjs",
     "demo:screenshot": "node scripts/capture-readme-screenshot.mjs",
     "demo:video": "npm run demo:record && npm run demo:render",
+    "hygiene:public": "node scripts/public-hygiene.mjs",
     "release:checksums": "node scripts/generate-release-checksums.mjs",
     "release:version": "node scripts/print-release-version.mjs",
     "tauri": "tauri"

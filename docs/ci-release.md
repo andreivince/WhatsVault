@@ -12,6 +12,7 @@ The quality job checks:
 - Rust Clippy warnings
 - Rust workspace tests
 - frontend unit tests
+- public repository hygiene guard
 - frontend production build
 - npm dependency audit
 

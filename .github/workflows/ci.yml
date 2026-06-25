@@ -56,6 +56,10 @@ jobs:
         working-directory: apps/desktop
         run: npm test
 
+      - name: Check public repository hygiene
+        working-directory: apps/desktop
+        run: npm run hygiene:public
+
       - name: Build desktop frontend
         working-directory: apps/desktop
         run: npm run build

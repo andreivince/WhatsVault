@@ -67,5 +67,5 @@ Public-safety rules:
 
 - Do not use real exported chats, real backups, real names, or real media in README videos.
 - Keep narration, subtitles, and demo messages in English.
-- Keep private-looking text detection centralized in `apps/desktop/demo/private-text-pattern.txt`; both the README screenshot capture and the demo walkthrough use it.
+- Keep private-looking text detection centralized in `apps/desktop/scripts/privacy-rules.mjs`; the README screenshot capture, demo walkthrough, and public repository hygiene guard use the same evaluator.
 - Commit only small, intentional README assets generated from synthetic data.

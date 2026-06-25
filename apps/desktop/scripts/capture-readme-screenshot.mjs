@@ -1,14 +1,15 @@
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
+
+import { hasPrivateDemoText } from "./privacy-rules.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const appDir = dirname(scriptDir);
 const repoRoot = resolve(appDir, "../..");
 const screenshotPath = join(repoRoot, "docs", "assets", "whatsvault-synthetic-demo.png");
 const demoUrl = process.env.WHATSVAULT_DEMO_URL ?? "http://127.0.0.1:1420/?demo=backup-chat";
-const privateTextPatternSource = readFileSync(join(appDir, "demo", "private-text-pattern.txt"), "utf8").trim();
 const screenshotViewport = { width: 1440, height: 920 };
 const messageCanvasScrollTop = 120;
 
@@ -29,13 +30,12 @@ try {
     element.scrollTo({ top: scrollTop });
   }, messageCanvasScrollTop);
 
-  const metrics = await page.evaluate((privatePatternSource) => {
+  const metrics = await page.evaluate(() => {
     const bodyText = document.body.textContent ?? "";
-    const privatePattern = new RegExp(privatePatternSource, "i");
     const previewImage = document.querySelector('img[alt="demo-photo.jpg"]');
 
     return {
-      bodyHasPrivatePattern: privatePattern.test(bodyText),
+      bodyText,
       bodyWidth: document.body.scrollWidth,
       exportButtonCount: document.querySelectorAll('[data-testid="export-button"]').length,
       hasSyntheticPreviewImage: Boolean(previewImage),
@@ -44,13 +44,13 @@ try {
       title: document.querySelector('[data-testid="chat-title"]')?.textContent ?? null,
       viewportWidth: window.innerWidth,
     };
-  }, privateTextPatternSource);
+  });
 
   if (metrics.title !== "Design Preview") {
     throw new Error(`Unexpected demo title: ${metrics.title ?? "missing"}`);
   }
 
-  if (metrics.bodyHasPrivatePattern) {
+  if (hasPrivateDemoText(metrics.bodyText)) {
     throw new Error("README screenshot route contains private-looking text.");
   }
 

@@ -123,6 +123,15 @@ cd apps/desktop
 npm test
 ```
 
+Run the public repository hygiene guard before publishing or opening a pull request:
+
+```sh
+cd apps/desktop
+npm run hygiene:public
+```
+
+The guard scans Git-tracked files plus local non-ignored new files for private backups, transcripts, databases, media, local paths, and personal roadmap-only material.
+
 Run desktop visual layout checks:
 
 ```sh

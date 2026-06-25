@@ -35,8 +35,11 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cd apps/desktop
 npm test
+npm run hygiene:public
 npm run build
 ```
+
+`npm run hygiene:public` scans Git-tracked files plus local non-ignored new files. It is meant to catch private backups, transcripts, databases, media, local paths, and personal roadmap-only material before a pull request.
 
 Build the desktop app locally:
 

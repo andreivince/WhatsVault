@@ -1,24 +1,18 @@
 import { expect, test } from "@playwright/test";
-import { readFileSync } from "node:fs";
+
+import { hasPrivateDemoText } from "../../scripts/privacy-rules.mjs";
 
 import { TEST_IDS } from "../../src/testing/testIds";
 
 const DEMO_STEP_PAUSE_MS = 4_200;
-const PRIVATE_TEXT_PATTERN_SOURCE = readFileSync(
-  new URL("../../demo/private-text-pattern.txt", import.meta.url),
-  "utf8",
-).trim();
 
 test("README demo walkthrough", async ({ page }) => {
   await test.step("Open the synthetic WhatsVault demo", async () => {
     await page.goto("/?demo=1");
 
     await expect(page.getByTestId(TEST_IDS.appShell)).toBeVisible();
-    const hasPrivateLookingText = await page.evaluate((privatePatternSource) => {
-      const privateTextPattern = new RegExp(privatePatternSource, "i");
-      return privateTextPattern.test(document.body.textContent ?? "");
-    }, PRIVATE_TEXT_PATTERN_SOURCE);
-    expect(hasPrivateLookingText).toBe(false);
+    const bodyText = await page.evaluate(() => document.body.textContent ?? "");
+    expect(hasPrivateDemoText(bodyText)).toBe(false);
     await expect(page.getByTestId(TEST_IDS.chatTitle)).toHaveText("Design Preview");
     await expect(page.getByTestId(TEST_IDS.conversationHeader)).toContainText("9 messages");
     await page.waitForTimeout(DEMO_STEP_PAUSE_MS);
