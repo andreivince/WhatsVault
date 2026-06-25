@@ -1,5 +1,8 @@
+mod dtos;
+mod public_error;
+mod source_registry;
+
 use std::{
-    collections::HashMap,
     fs,
     fs::File,
     path::{Path, PathBuf},
@@ -7,7 +10,6 @@ use std::{
 };
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use serde::Serialize;
 use tauri::{AppHandle, State};
 use tauri_plugin_dialog::{DialogExt, FilePath};
 use whatsvault_core::{
@@ -30,8 +32,17 @@ use whatsvault_core::{
         list_chat_storage_chats_limited, search_chat_storage_chat_recent,
         search_chat_storage_chats_limited,
     },
-    AttachmentKind, BackupCandidate, BackupMetadata, Chat, ChatImport, ImportIssue,
-    ImportIssueCode, MessageTimestamp,
+    AttachmentKind, BackupCandidate, BackupMetadata, ChatImport, ImportIssue, ImportIssueCode,
+};
+
+use dtos::{
+    AttachmentPreviewDto, ChatDto, HtmlExportResultDto, IphoneBackupCandidateDto,
+    IphoneBackupChatSearchResultDto, IphoneBackupChatsResultDto, LoadedChatSourceDto,
+    OpenLocalChatSourceResultDto, WhatsappBackupStatusDto,
+};
+use public_error::PublicError;
+use source_registry::{
+    registered_backup_path, registered_export_path, SourceRegistry, SourceRegistryState,
 };
 
 const ATTACHMENT_PREVIEW_MAX_BYTES: u64 = 8 * 1024 * 1024;
@@ -41,138 +52,6 @@ const BACKUP_CHAT_LIST_MAX_ROWS: usize = 1_000;
 const BACKUP_CHAT_SEARCH_MAX_ROWS: usize = 200;
 const BACKUP_CHAT_IMPORT_MAX_MESSAGES: usize = 2_000;
 const BACKUP_CHAT_SEARCH_MAX_RESULTS: usize = 500;
-type SourceRegistryState = Mutex<SourceRegistry>;
-
-#[derive(Debug, Default)]
-struct SourceRegistry {
-    backup_paths: HashMap<String, PathBuf>,
-    export_paths: HashMap<String, PathBuf>,
-    next_export_handle: u64,
-}
-
-impl SourceRegistry {
-    fn clear_backups(&mut self) {
-        self.backup_paths.clear();
-    }
-
-    fn register_backup(&mut self, index: usize, path: PathBuf) -> String {
-        let handle = format!("backup-source-{}", index + 1);
-        self.backup_paths.insert(handle.clone(), path);
-        handle
-    }
-
-    fn register_export(&mut self, path: PathBuf) -> String {
-        self.next_export_handle += 1;
-        let handle = format!("export-source-{}", self.next_export_handle);
-        self.export_paths.insert(handle.clone(), path);
-        handle
-    }
-
-    fn backup_path(&self, handle: &str) -> Option<PathBuf> {
-        self.backup_paths.get(handle).cloned()
-    }
-
-    fn export_path(&self, handle: &str) -> Option<PathBuf> {
-        self.export_paths.get(handle).cloned()
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LoadedChatSourceDto {
-    pub kind: String,
-    pub handle: String,
-    pub display_name: String,
-    pub chat_id: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OpenLocalChatSourceResultDto {
-    pub source: LoadedChatSourceDto,
-    pub imported: ChatImport,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AttachmentPreviewDto {
-    pub media_type: String,
-    pub data_url: String,
-    pub size_bytes: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HtmlExportResultDto {
-    pub embedded_attachment_count: usize,
-    pub skipped_attachment_count: usize,
-    pub exported_message_count: usize,
-    pub skipped_message_count: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct IphoneBackupCandidateDto {
-    pub handle: String,
-    pub display_name: String,
-    pub product_label: Option<String>,
-    pub product_version: Option<String>,
-    pub last_backup_date: Option<String>,
-    pub is_encrypted: Option<bool>,
-    pub has_info_plist: bool,
-    pub has_status_plist: bool,
-    pub has_manifest_plist: bool,
-    pub whatsapp: WhatsappBackupStatusDto,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WhatsappBackupStatusDto {
-    pub manifest_readable: bool,
-    pub has_chat_storage: bool,
-    pub has_contacts: bool,
-    pub media_file_count: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ChatDto {
-    pub id: String,
-    pub title: String,
-    pub latest_message: Option<String>,
-    pub latest_message_timestamp: Option<MessageTimestamp>,
-    pub message_count: u64,
-    pub attachment_count: u64,
-}
-
-impl From<Chat> for ChatDto {
-    fn from(chat: Chat) -> Self {
-        Self {
-            id: chat.id,
-            title: chat.title,
-            latest_message: chat.latest_message,
-            latest_message_timestamp: chat.latest_message_timestamp,
-            message_count: chat.message_count,
-            attachment_count: chat.attachment_count,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct IphoneBackupChatsResultDto {
-    pub chats: Vec<ChatDto>,
-    pub is_truncated: bool,
-    pub limit: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct IphoneBackupChatSearchResultDto {
-    pub imported: ChatImport,
-    pub is_truncated: bool,
-    pub limit: usize,
-}
 
 #[tauri::command]
 fn list_iphone_backups(
@@ -633,63 +512,6 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("failed to run WhatsVault desktop app");
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PublicError {
-    SelectedSourceUnreadable,
-    SelectedSourceImportFailed,
-    AttachmentPreviewFailed,
-    BackupChatListFailed,
-    BackupChatImportFailed,
-    HtmlExportFailed,
-    ExportLocationUnavailable,
-}
-
-impl PublicError {
-    fn message(self) -> &'static str {
-        match self {
-            Self::SelectedSourceUnreadable => "Could not read the selected local source.",
-            Self::SelectedSourceImportFailed => "Could not import the selected local source.",
-            Self::AttachmentPreviewFailed => "Could not read media from the selected local source.",
-            Self::BackupChatListFailed => "Could not read chats from the selected iPhone backup.",
-            Self::BackupChatImportFailed => "Could not open the selected iPhone backup chat.",
-            Self::HtmlExportFailed => "Could not write the HTML export.",
-            Self::ExportLocationUnavailable => "Could not use the selected export location.",
-        }
-    }
-
-    fn redact(self, _error: impl std::fmt::Display) -> String {
-        self.message().to_owned()
-    }
-}
-
-fn registered_backup_path(
-    registry: &SourceRegistryState,
-    backup_handle: &str,
-) -> Result<PathBuf, String> {
-    registry
-        .lock()
-        .map_err(|_| "Could not access local source handles.".to_owned())?
-        .backup_path(backup_handle)
-        .ok_or_else(|| {
-            "The selected iPhone backup is no longer available. Refresh backups and try again."
-                .to_owned()
-        })
-}
-
-fn registered_export_path(
-    registry: &SourceRegistryState,
-    source_handle: &str,
-) -> Result<PathBuf, String> {
-    registry
-        .lock()
-        .map_err(|_| "Could not access local source handles.".to_owned())?
-        .export_path(source_handle)
-        .ok_or_else(|| {
-            "The selected WhatsApp export is no longer available. Open it again and try again."
-                .to_owned()
-        })
 }
 
 fn register_backup_candidate_dtos(

@@ -134,6 +134,12 @@ Current commands:
 
 The frontend may derive presentation details such as filtered message windows and chat-row summaries, but it must not parse WhatsApp transcript syntax or ZIP structure.
 
+Desktop command support modules keep shared Tauri boundary rules centralized:
+
+- `apps/desktop/src-tauri/src/dtos.rs` owns serialized command payloads and camelCase DTO shape.
+- `apps/desktop/src-tauri/src/source_registry.rs` owns opaque source handles for local backup and export paths.
+- `apps/desktop/src-tauri/src/public_error.rs` owns redacted user-facing command errors.
+
 Tauri path boundary rules:
 
 - Native open/save dialogs live in Rust commands, not JavaScript.
