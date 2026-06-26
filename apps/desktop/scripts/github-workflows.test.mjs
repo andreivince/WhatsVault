@@ -38,6 +38,19 @@ describe("GitHub workflow configuration", () => {
     expect(readinessIndex).toBeLessThan(buildIndex);
   });
 
+  it("gates desktop visual checks in CI after installing Playwright Chromium", async () => {
+    const ciSource = await readFile(workflowPaths[0], "utf8");
+    const buildIndex = ciSource.indexOf("npm run build");
+    const playwrightInstallIndex = ciSource.indexOf("npx playwright install --with-deps chromium");
+    const visualCheckIndex = ciSource.indexOf("npm run visual:check");
+    const auditIndex = ciSource.indexOf("npm audit --audit-level=low");
+
+    expect(buildIndex).toBeGreaterThan(-1);
+    expect(playwrightInstallIndex).toBeGreaterThan(buildIndex);
+    expect(visualCheckIndex).toBeGreaterThan(playwrightInstallIndex);
+    expect(auditIndex).toBeGreaterThan(visualCheckIndex);
+  });
+
   it("keeps release notes aligned with current proof gates", async () => {
     const releaseSource = await readFile(workflowPaths[1], "utf8");
 

@@ -6,10 +6,14 @@ use whatsvault_core::sources::iphone_backup::{
 };
 use whatsvault_core::{
     whatsapp::chat_storage::{
-        import_chat_storage_chat, list_chat_storage_chats, summarize_chat_storage, ChatStorageError,
+        import_chat_storage_chat_recent, list_chat_storage_chats_limited, summarize_chat_storage,
+        ChatStorageError,
     },
     ChatStorageSummary,
 };
+
+const PROOF_CHAT_LIST_SAMPLE_LIMIT: usize = 25;
+const PROOF_CHAT_IMPORT_MESSAGE_SAMPLE_LIMIT: usize = 25;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProofError {
@@ -49,6 +53,7 @@ pub struct ChatStorageCountsProof {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChatListCountsProof {
     pub chat_count: usize,
+    pub chat_sample_limit: usize,
     pub first_chat_message_count: u64,
     pub first_chat_attachment_count: u64,
 }
@@ -56,6 +61,7 @@ pub struct ChatListCountsProof {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChatImportCountsProof {
     pub message_count: usize,
+    pub message_sample_limit: usize,
     pub attachment_count: usize,
     pub issue_count: usize,
 }
@@ -98,13 +104,19 @@ pub fn build_report(roots: Vec<PathBuf>) -> Result<ProofReport, ProofError> {
             };
             let (chat_list_summary, first_chat_import_summary) = match chat_storage_path.as_ref() {
                 Some(path) if path.is_file() => {
-                    let chats = list_chat_storage_chats(path)?;
+                    let chats =
+                        list_chat_storage_chats_limited(path, PROOF_CHAT_LIST_SAMPLE_LIMIT)?;
                     let first_chat = chats.first();
                     let import_summary = match first_chat {
                         Some(chat) => {
-                            let imported = import_chat_storage_chat(path, &chat.id)?;
+                            let imported = import_chat_storage_chat_recent(
+                                path,
+                                &chat.id,
+                                PROOF_CHAT_IMPORT_MESSAGE_SAMPLE_LIMIT,
+                            )?;
                             Some(ChatImportCountsProof {
                                 message_count: imported.messages.len(),
+                                message_sample_limit: PROOF_CHAT_IMPORT_MESSAGE_SAMPLE_LIMIT,
                                 attachment_count: imported.attachments.len(),
                                 issue_count: imported.issues.len(),
                             })
@@ -114,6 +126,7 @@ pub fn build_report(roots: Vec<PathBuf>) -> Result<ProofReport, ProofError> {
                     (
                         Some(ChatListCountsProof {
                             chat_count: chats.len(),
+                            chat_sample_limit: PROOF_CHAT_LIST_SAMPLE_LIMIT,
                             first_chat_message_count: first_chat
                                 .map(|chat| chat.message_count)
                                 .unwrap_or_default(),
@@ -206,12 +219,21 @@ pub fn render_report(report: &ProofReport) -> String {
             yes_no(backup.chat_list_summary.is_some())
         ));
         output.push_str(&format!(
-            "whatsapp_chat_list_count: {}\n",
+            "whatsapp_chat_list_sample_count: {}\n",
             count_or_unknown_usize(
                 backup
                     .chat_list_summary
                     .as_ref()
                     .map(|summary| summary.chat_count)
+            )
+        ));
+        output.push_str(&format!(
+            "whatsapp_chat_list_sample_limit: {}\n",
+            count_or_unknown_usize(
+                backup
+                    .chat_list_summary
+                    .as_ref()
+                    .map(|summary| summary.chat_sample_limit)
             )
         ));
         output.push_str(&format!(
@@ -237,7 +259,7 @@ pub fn render_report(report: &ProofReport) -> String {
             yes_no(backup.first_chat_import_summary.is_some())
         ));
         output.push_str(&format!(
-            "whatsapp_first_chat_import_message_count: {}\n",
+            "whatsapp_first_chat_import_message_sample_count: {}\n",
             count_or_unknown_usize(
                 backup
                     .first_chat_import_summary
@@ -246,7 +268,16 @@ pub fn render_report(report: &ProofReport) -> String {
             )
         ));
         output.push_str(&format!(
-            "whatsapp_first_chat_import_attachment_count: {}\n",
+            "whatsapp_first_chat_import_message_sample_limit: {}\n",
+            count_or_unknown_usize(
+                backup
+                    .first_chat_import_summary
+                    .as_ref()
+                    .map(|summary| summary.message_sample_limit)
+            )
+        ));
+        output.push_str(&format!(
+            "whatsapp_first_chat_import_attachment_sample_count: {}\n",
             count_or_unknown_usize(
                 backup
                     .first_chat_import_summary
@@ -373,6 +404,73 @@ mod tests {
             .unwrap();
     }
 
+    fn create_large_chat_storage(path: &Path, chat_count: usize, first_chat_message_count: usize) {
+        let connection = Connection::open(path).unwrap();
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE ZWAMESSAGE (
+                    Z_PK INTEGER PRIMARY KEY,
+                    ZCHATSESSION INTEGER,
+                    ZMESSAGEDATE REAL,
+                    ZTEXT TEXT
+                );
+                CREATE TABLE ZWACHATSESSION (
+                    Z_PK INTEGER PRIMARY KEY,
+                    ZCONTACTJID TEXT
+                );
+                CREATE TABLE ZWAMEDIAITEM (
+                    Z_PK INTEGER PRIMARY KEY,
+                    ZMESSAGE INTEGER,
+                    ZMEDIALOCALPATH TEXT
+                );
+                "#,
+            )
+            .unwrap();
+
+        for chat_id in 1..=chat_count {
+            connection
+                .execute(
+                    "INSERT INTO ZWACHATSESSION (Z_PK, ZCONTACTJID) VALUES (?1, ?2)",
+                    (
+                        chat_id as i64,
+                        format!("synthetic-chat-{chat_id}@s.whatsapp.net"),
+                    ),
+                )
+                .unwrap();
+        }
+
+        let mut message_pk = 1_i64;
+        for message_index in 0..first_chat_message_count {
+            connection
+                .execute(
+                    "INSERT INTO ZWAMESSAGE (Z_PK, ZCHATSESSION, ZMESSAGEDATE, ZTEXT) VALUES (?1, 1, ?2, ?3)",
+                    (
+                        message_pk,
+                        10_000.0 + message_index as f64,
+                        format!("sampled first-chat message {message_index}"),
+                    ),
+                )
+                .unwrap();
+            message_pk += 1;
+        }
+
+        for chat_id in 2..=chat_count {
+            connection
+                .execute(
+                    "INSERT INTO ZWAMESSAGE (Z_PK, ZCHATSESSION, ZMESSAGEDATE, ZTEXT) VALUES (?1, ?2, ?3, ?4)",
+                    (
+                        message_pk,
+                        chat_id as i64,
+                        chat_id as f64,
+                        format!("sampled chat {chat_id}"),
+                    ),
+                )
+                .unwrap();
+            message_pk += 1;
+        }
+    }
+
     #[test]
     fn empty_report_does_not_include_private_paths_or_ids() {
         let report = ProofReport {
@@ -408,11 +506,13 @@ mod tests {
                 }),
                 chat_list_summary: Some(ChatListCountsProof {
                     chat_count: 2,
+                    chat_sample_limit: 25,
                     first_chat_message_count: 6,
                     first_chat_attachment_count: 1,
                 }),
                 first_chat_import_summary: Some(ChatImportCountsProof {
                     message_count: 6,
+                    message_sample_limit: 25,
                     attachment_count: 1,
                     issue_count: 0,
                 }),
@@ -429,12 +529,14 @@ mod tests {
         assert!(rendered.contains("whatsapp_chat_count: 2"));
         assert!(rendered.contains("whatsapp_media_item_count: 4"));
         assert!(rendered.contains("whatsapp_chat_list_readable: yes"));
-        assert!(rendered.contains("whatsapp_chat_list_count: 2"));
+        assert!(rendered.contains("whatsapp_chat_list_sample_count: 2"));
+        assert!(rendered.contains("whatsapp_chat_list_sample_limit: 25"));
         assert!(rendered.contains("whatsapp_first_chat_message_count: 6"));
         assert!(rendered.contains("whatsapp_first_chat_attachment_count: 1"));
         assert!(rendered.contains("whatsapp_first_chat_import_readable: yes"));
-        assert!(rendered.contains("whatsapp_first_chat_import_message_count: 6"));
-        assert!(rendered.contains("whatsapp_first_chat_import_attachment_count: 1"));
+        assert!(rendered.contains("whatsapp_first_chat_import_message_sample_count: 6"));
+        assert!(rendered.contains("whatsapp_first_chat_import_message_sample_limit: 25"));
+        assert!(rendered.contains("whatsapp_first_chat_import_attachment_sample_count: 1"));
         assert!(rendered.contains("whatsapp_first_chat_import_issue_count: 0"));
         assert!(rendered.contains("whatsapp_media_manifest_entries: 42"));
         assert!(!rendered.contains("/Users/"));
@@ -477,12 +579,14 @@ mod tests {
         assert!(rendered.contains("whatsapp_chat_count: 2"));
         assert!(rendered.contains("whatsapp_media_item_count: 1"));
         assert!(rendered.contains("whatsapp_chat_list_readable: yes"));
-        assert!(rendered.contains("whatsapp_chat_list_count: 2"));
+        assert!(rendered.contains("whatsapp_chat_list_sample_count: 2"));
+        assert!(rendered.contains("whatsapp_chat_list_sample_limit: 25"));
         assert!(rendered.contains("whatsapp_first_chat_message_count: 1"));
         assert!(rendered.contains("whatsapp_first_chat_attachment_count: 1"));
         assert!(rendered.contains("whatsapp_first_chat_import_readable: yes"));
-        assert!(rendered.contains("whatsapp_first_chat_import_message_count: 1"));
-        assert!(rendered.contains("whatsapp_first_chat_import_attachment_count: 1"));
+        assert!(rendered.contains("whatsapp_first_chat_import_message_sample_count: 1"));
+        assert!(rendered.contains("whatsapp_first_chat_import_message_sample_limit: 25"));
+        assert!(rendered.contains("whatsapp_first_chat_import_attachment_sample_count: 1"));
         assert!(rendered.contains("whatsapp_first_chat_import_issue_count: 0"));
         assert!(rendered.contains("whatsapp_media_manifest_entries: 1"));
         assert!(!rendered.contains("hello"));
@@ -491,5 +595,55 @@ mod tests {
         assert!(!rendered.contains("synthetic-device-backup"));
         assert!(!rendered.contains("synthetic-chat-storage-file-id"));
         assert!(!rendered.contains("synthetic-photo-media-file-id"));
+    }
+
+    #[test]
+    fn proof_report_samples_large_chat_storage_without_unbounded_imports() {
+        let root = tempdir().unwrap();
+        let backup = root.path().join("synthetic-device-backup");
+        fs::create_dir_all(backup.join("sy")).unwrap();
+        create_large_chat_storage(
+            &backup.join("sy").join("synthetic-chat-storage-file-id"),
+            30,
+            40,
+        );
+
+        let manifest = backup.join("Manifest.db");
+        create_manifest_db(&manifest);
+        let connection = Connection::open(&manifest).unwrap();
+        insert_manifest_file(
+            &connection,
+            "synthetic-chat-storage-file-id",
+            "AppDomainGroup-group.net.whatsapp.WhatsApp.shared",
+            "ChatStorage.sqlite",
+        );
+
+        let report = build_report(vec![root.path().to_path_buf()]).unwrap();
+        let backup_report = &report.backups[0];
+        let chat_list = backup_report.chat_list_summary.as_ref().unwrap();
+        let import = backup_report.first_chat_import_summary.as_ref().unwrap();
+        let rendered = render_report(&report);
+
+        assert_eq!(
+            backup_report
+                .chat_storage_summary
+                .as_ref()
+                .and_then(|summary| summary.chat_count),
+            Some(30)
+        );
+        assert_eq!(
+            backup_report
+                .chat_storage_summary
+                .as_ref()
+                .and_then(|summary| summary.message_count),
+            Some(69)
+        );
+        assert_eq!(chat_list.chat_count, 25);
+        assert_eq!(chat_list.first_chat_message_count, 40);
+        assert_eq!(import.message_count, 25);
+        assert!(rendered.contains("whatsapp_chat_list_sample_limit: 25"));
+        assert!(rendered.contains("whatsapp_first_chat_import_message_sample_limit: 25"));
+        assert!(!rendered.contains("sampled first-chat message"));
+        assert!(!rendered.contains("synthetic-chat-storage-file-id"));
     }
 }

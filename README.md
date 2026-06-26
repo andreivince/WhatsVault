@@ -72,7 +72,7 @@ See [docs/demo-video.md](docs/demo-video.md) for the Playwright plus `playwright
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md), [docs/troubleshooting.md](docs/troubleshooting.md), and [docs/ci-release.md](docs/ci-release.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), [CHANGELOG.md](CHANGELOG.md), [docs/troubleshooting.md](docs/troubleshooting.md), and [docs/ci-release.md](docs/ci-release.md).
 
 ## Verified So Far
 
@@ -100,7 +100,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md), [docs/troubleshooting.md](docs/troublesh
 - The README links to a committed synthetic MP4 generated through the Playwright plus `playwright-recast` workflow.
 - The desktop visual suite covers keyboard focus visibility, accessible names for icon-only controls, contrast floors for core text, and removal of fake or unsupported action chrome.
 - A private-safe proof CLI exists at `crates/whatsvault-proof`.
-- The private-safe proof CLI has located WhatsApp `ChatStorage.sqlite` through a real local iPhone backup `Manifest.db`, confirmed the physical backup file exists, read nonzero aggregate database counts, read the real chat list, and imported a real chat into the normalized model without printing paths, identifiers, names, message bodies, or filenames.
+- The private-safe proof CLI has located WhatsApp `ChatStorage.sqlite` through a real local iPhone backup `Manifest.db`, confirmed the physical backup file exists, read nonzero aggregate database counts, read a bounded real chat-list sample, and imported a bounded real chat sample into the normalized model without printing paths, identifiers, names, message bodies, or filenames.
 - A macOS `.app` bundle and DMG can be built locally with Tauri, and release checksum manifests can be generated from the bundle outputs.
 - Visible packaged-window smoke from the generated macOS app bundle opens to a nonblank source screen locally.
 - CI and draft-release workflows are configured for macOS Apple Silicon, macOS Intel, and Windows Tauri builds.
@@ -207,6 +207,8 @@ cd apps/desktop
 npm run release:checksums
 ```
 
+The checksum command scans `target/release/bundle` plus target-specific Tauri roots such as `target/<target-triple>/release/bundle`. Set `WHATSVAULT_BUNDLE_DIR` only when checking one explicit bundle directory.
+
 Current HTML export behavior:
 
 - Exports the loaded WhatsApp export ZIP chat or selected iPhone-backup chat to one `.html` file.
@@ -228,7 +230,7 @@ Run the proof command against a specific backup root:
 cargo run -p whatsvault-proof -- "/path/to/MobileSync/Backup"
 ```
 
-The proof command reports aggregate counts and booleans only. It does not print device IDs, backup paths, file IDs, contacts, message bodies, or media filenames.
+The proof command reports aggregate counts, sampled counts, sample limits, and booleans only. It does not print device IDs, backup paths, file IDs, contacts, message bodies, or media filenames.
 
 Optionally validate a private local WhatsApp export ZIP without printing chat content:
 

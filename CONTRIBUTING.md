@@ -38,11 +38,12 @@ npm test
 npm run hygiene:public
 npm run release:readiness
 npm run build
+npm run visual:check
 ```
 
 `npm run hygiene:public` scans Git-tracked files plus local non-ignored new files. It is meant to catch private backups, transcripts, databases, media, local paths, and personal roadmap-only material before a pull request.
 
-`npm run release:readiness` confirms the public docs still describe known release blockers honestly. `npm run release:preflight` is the stricter stable-release gate; it is expected to fail while real-backup proof, packaged render smoke, or signing remain incomplete.
+`npm run release:readiness` confirms the public docs still describe known release blockers honestly. `npm run release:preflight` is the stricter stable-release gate; it is expected to fail while signing and notarization are incomplete.
 
 Build the desktop app locally:
 
@@ -78,3 +79,5 @@ Before opening a pull request:
 2. Confirm no private files or identifiers are included.
 3. Update docs when the user workflow, supported-source status, or architecture boundary changes.
 4. Keep changes focused on one coherent improvement.
+
+Contributors must follow [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). Privacy mistakes should be treated as project-safety issues and fixed before broader review.

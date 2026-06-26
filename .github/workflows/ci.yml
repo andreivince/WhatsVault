@@ -68,6 +68,14 @@ jobs:
         working-directory: apps/desktop
         run: npm run build
 
+      - name: Install Playwright Chromium
+        working-directory: apps/desktop
+        run: npx playwright install --with-deps chromium
+
+      - name: Run desktop visual checks
+        working-directory: apps/desktop
+        run: npm run visual:check
+
       - name: Audit desktop dependencies
         working-directory: apps/desktop
         run: npm audit --audit-level=low

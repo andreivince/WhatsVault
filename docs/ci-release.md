@@ -2,6 +2,8 @@
 
 WhatsVault uses GitHub Actions to keep the desktop app portable across macOS and Windows.
 
+Dependabot version updates are configured in `.github/dependabot.yml` for Rust crates, desktop npm packages, and GitHub Actions. Dependency-update pull requests still need the normal CI, hygiene, and release-readiness checks before merging.
+
 ## CI Workflow
 
 `.github/workflows/ci.yml` runs on pull requests, pushes to `main`, and manual dispatch.
@@ -15,6 +17,7 @@ The quality job checks:
 - public repository hygiene guard
 - release readiness honesty guard
 - frontend production build
+- desktop visual checks
 - npm dependency audit
 
 The bundle smoke job builds Tauri bundles on:
@@ -49,7 +52,7 @@ Tagged releases upload target-specific checksum manifests next to the Tauri bund
 - `WhatsVault_macos-x86_64_SHA256SUMS.txt`
 - `WhatsVault_windows-x86_64_SHA256SUMS.txt`
 
-The checksum command reads bundle output from `target/release/bundle` by default and writes ignored release metadata to `target/release/release-metadata`.
+The checksum command scans `target/release/bundle` plus target-specific Tauri roots such as `target/<target-triple>/release/bundle` by default. Use `WHATSVAULT_BUNDLE_DIR` only when checking one explicit bundle directory. It writes ignored release metadata to `target/release/release-metadata`.
 
 ## Release Readiness Guard
 
@@ -65,7 +68,7 @@ Current pre-alpha state is allowed only when the remaining signing blocker stays
 
 Local macOS package checks should verify:
 
-- `npm run tauri build` creates `WhatsVault.app` and a DMG under `target/release/bundle`.
+- `npm run tauri build` creates `WhatsVault.app` and a DMG under `target/release/bundle`, or under `target/<target-triple>/release/bundle` for targeted builds.
 - `npm run release:checksums` writes checksum metadata under `target/release/release-metadata`.
 - The packaged `.app` opens to the source screen from the generated bundle, not only from the Vite dev server.
 

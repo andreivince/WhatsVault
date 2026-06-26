@@ -195,7 +195,7 @@ Rules:
 
 `crates/whatsvault-proof` is a small command-line proof runner for the pre-UI phase.
 
-It checks configured backup roots, finds candidate backups, inspects `Manifest.db`, resolves `ChatStorage.sqlite` through the backup fileID mapping, reads aggregate WhatsApp database counts, lists chats, and imports one real chat into the normalized app model when the physical SQLite file is readable. It intentionally reports only counts and booleans so the command is safe to paste into issues or development notes.
+It checks configured backup roots, finds candidate backups, inspects `Manifest.db`, resolves `ChatStorage.sqlite` through the backup fileID mapping, reads aggregate WhatsApp database counts, lists a bounded chat sample, and imports a bounded first-chat sample into the normalized app model when the physical SQLite file is readable. It intentionally reports only aggregate counts, sampled counts, sample limits, and booleans so the command is safe to paste into issues or development notes.
 
 Run it with default backup roots:
 
@@ -235,7 +235,7 @@ Committed fixtures must be synthetic and intentionally small.
 
 ## Current Proof Status
 
-Synthetic tests now cover iPhone backup discovery, selected-folder fallback discovery, default backup-root construction for macOS and Windows, metadata plist parsing, `Manifest.db` mapping, fileID physical resolution, aggregate `ChatStorage.sqlite` counts, chat listing, selected-chat import into the normalized app model, the desktop command boundary from backup folder to resolved `ChatStorage.sqlite`, backup media preview/export resolution from `Manifest.db` to hashed backup files, bounded internal selected backup-chat HTML export through the shared exporter, and the React path that shows and opens backup chats through the shared timeline model. A real local MobileSync backup has now proven `Manifest.db` discovery, physical `ChatStorage.sqlite` resolution, aggregate counts, safe chat-list extraction, normalized chat import through the proof CLI, desktop chat rendering, bounded media preview, and bounded HTML export from the packaged app.
+Synthetic tests now cover iPhone backup discovery, selected-folder fallback discovery, default backup-root construction for macOS and Windows, metadata plist parsing, `Manifest.db` mapping, fileID physical resolution, aggregate `ChatStorage.sqlite` counts, bounded proof CLI sampling, chat listing, selected-chat import into the normalized app model, the desktop command boundary from backup folder to resolved `ChatStorage.sqlite`, backup media preview/export resolution from `Manifest.db` to hashed backup files, bounded internal selected backup-chat HTML export through the shared exporter, and the React path that shows and opens backup chats through the shared timeline model. A real local MobileSync backup has now proven `Manifest.db` discovery, physical `ChatStorage.sqlite` resolution, aggregate counts, safe bounded chat-list extraction, normalized bounded chat import through the proof CLI, desktop chat rendering, bounded media preview, and bounded HTML export from the packaged app.
 
 The next safe proof slice is:
 

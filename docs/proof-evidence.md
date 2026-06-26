@@ -41,7 +41,7 @@ The repeatable tests cover:
 - default backup-root construction for macOS and Windows
 - selected backup folder fallback behavior
 - `Manifest.db` file mapping
-- `ChatStorage.sqlite` summary, chat listing, selected-chat import, selected-chat search, and bounded chat-list search
+- `ChatStorage.sqlite` summary, bounded proof CLI sampling, chat listing, selected-chat import, selected-chat search, and bounded chat-list search
 - media path resolution from WhatsApp relative paths to iPhone backup files
 - bounded media preview behavior
 - bounded HTML export and HTML escaping
@@ -53,7 +53,7 @@ The repeatable tests cover:
 Private proof is allowed only when the evidence stays local and redacted:
 
 1. Run `cargo run -p whatsvault-proof` against local backups.
-2. Record only booleans, aggregate counts, command names, dates, and whether the app reached the expected screen.
+2. Record only booleans, aggregate counts, sampled counts, sample limits, command names, dates, and whether the app reached the expected screen.
 3. Keep generated screenshots, exported HTML, backup files, databases, and media in ignored local paths.
 4. Before committing, run `cd apps/desktop && npm run hygiene:public`.
 

@@ -8,7 +8,7 @@ The project is pre-alpha. Security fixes target the current `main` branch until 
 
 ## Reporting a Vulnerability
 
-Use GitHub private vulnerability reporting when available. If that is not available, open a public issue with only sanitized details.
+Use GitHub private vulnerability reporting for security or privacy-sensitive reports. Open a public issue only for sanitized, non-sensitive bugs that do not require private chat, backup, path, identifier, or media details.
 
 Do not include:
 

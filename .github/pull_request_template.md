@@ -11,6 +11,7 @@
 - [ ] `cd apps/desktop && npm run hygiene:public`
 - [ ] `cd apps/desktop && npm run release:readiness`
 - [ ] `cd apps/desktop && npm run build`
+- [ ] `cd apps/desktop && npm run visual:check`
 
 ## Privacy
 
