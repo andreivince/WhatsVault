@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,6 +19,9 @@ const repoRoot = resolve(scriptDir, "../../..");
 function privateMarker(parts) {
   return parts.join("");
 }
+
+const privateExportMarker = String.fromCharCode(70, 85, 76, 76, 32, 86, 65, 80, 79);
+const privateExportToken = String.fromCharCode(86, 65, 80, 79);
 
 describe("public repository hygiene guard", () => {
   it("blocks tracked private backup, database, plist, archive, and media artifacts by default", () => {
@@ -56,18 +59,30 @@ describe("public repository hygiene guard", () => {
       privateMarker(["Evidence", " Checklist"]),
       privateMarker(["star", " milestones"]),
       privateMarker(["download", " counts per release"]),
-      privateMarker(["FULL", " VAPO"]),
     ].join("\n");
 
     expect(auditTextContent("ROADMAP.md", text).map((issue) => issue.code)).toEqual([
       "private-macos-path",
       "private-windows-path",
-      "private-export-name",
       "personal-roadmap-evidence",
       "personal-roadmap-evidence",
       "personal-roadmap-metric",
       "personal-roadmap-metric",
       "personal-roadmap-section",
+    ]);
+  });
+
+  it("flags personal launch-channel planning text", () => {
+    const text = [
+      privateMarker(["Hacker", " News"]),
+      privateMarker(["R", "eddit"]),
+      privateMarker(["Linked", "In"]),
+    ].join("\n");
+
+    expect(auditTextContent("ROADMAP.md", text).map((issue) => issue.code)).toEqual([
+      "personal-roadmap-launch",
+      "personal-roadmap-launch",
+      "personal-roadmap-launch",
     ]);
   });
 
@@ -164,6 +179,19 @@ describe("public repository hygiene guard", () => {
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }
+  });
+
+  it("keeps the hygiene implementation free of private literal markers", async () => {
+    const implementationPaths = [
+      "apps/desktop/scripts/privacy-rules.mjs",
+      "apps/desktop/scripts/public-hygiene.test.mjs",
+    ];
+    const contents = await Promise.all(
+      implementationPaths.map((implementationPath) => readFile(resolve(repoRoot, implementationPath), "utf8")),
+    );
+
+    expect(contents.some((content) => content.includes(privateExportMarker))).toBe(false);
+    expect(contents.some((content) => content.includes(privateExportToken))).toBe(false);
   });
 
   it("keeps the current public candidate repository files free of private artifacts and personal roadmap text", async () => {

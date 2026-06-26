@@ -268,18 +268,13 @@ Goal: share the project only after it is useful, credible, and easy for new user
 
 Tasks:
 
-1. Post to Hacker News Show HN only after screenshots and release exist.
-2. Post to relevant Reddit communities carefully:
-   - `r/selfhosted` if local-first angle fits
-   - `r/DataHoarder` for archive angle
-   - `r/macapps` if release is polished
-   - `r/privacy` if privacy story is strong
-3. Submit to open-source directories and awesome lists.
-4. Write a technical blog post:
+1. Publish a concise release announcement only after screenshots and downloadable builds exist.
+2. Keep launch copy centered on local-first privacy, install steps, known limitations, and real user value.
+3. Submit to relevant open-source directories and curated project lists after install proof is strong.
+4. Write a technical article:
    How iPhone backups store WhatsApp data and how WhatsVault reconstructs chats locally.
-5. Post LinkedIn with engineering angle, not startup pitch.
-6. Ask early users to open issues so feedback becomes searchable and useful to future contributors.
-7. Track project health signals such as issues, downloads, release regressions, and contributor activity.
+5. Ask early users to open GitHub issues so feedback becomes searchable and useful to future contributors.
+6. Watch project health through issue quality, install failures, release regressions, and contributor activity.
 
 Output needed:
 
