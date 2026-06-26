@@ -2,7 +2,7 @@
 
 WhatsVault uses GitHub Actions to keep the desktop app portable across macOS and Windows.
 
-Dependabot version updates are configured in `.github/dependabot.yml` for Rust crates, desktop npm packages, and GitHub Actions. Dependency-update pull requests still need the normal CI, hygiene, and release-readiness checks before merging.
+Dependabot version updates are configured in `.github/dependabot.yml` for Rust crates, desktop npm packages, and GitHub Actions. Routine minor and patch updates are grouped by ecosystem, major version bumps are ignored by default, and dependency-update pull requests still need the normal CI, hygiene, and release-readiness checks before merging.
 
 ## CI Workflow
 

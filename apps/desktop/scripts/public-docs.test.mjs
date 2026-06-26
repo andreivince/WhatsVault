@@ -39,7 +39,11 @@ describe("public repository docs", () => {
     expect(dependabot).toMatch(/package-ecosystem:\s+"cargo"[\s\S]*?directory:\s+"\/"/);
     expect(dependabot).toMatch(/package-ecosystem:\s+"npm"[\s\S]*?directory:\s+"\/apps\/desktop"/);
     expect(dependabot).toMatch(/package-ecosystem:\s+"github-actions"[\s\S]*?directory:\s+"\/"/);
+    expect(dependabot).toContain("open-pull-requests-limit");
+    expect(dependabot).toContain("version-update:semver-major");
+    expect(dependabot).toContain("desktop-npm-minor-patch");
     expect(ciRelease).toContain(".github/dependabot.yml");
+    expect(ciRelease).toContain("major version bumps are ignored by default");
   });
 
   it("keeps privacy-sensitive security reports on the private reporting path", async () => {
