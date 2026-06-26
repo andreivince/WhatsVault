@@ -3,6 +3,11 @@ name: Release
 on:
   workflow_dispatch:
     inputs:
+      publish_release:
+        description: Publish the GitHub Release instead of leaving it as a draft.
+        required: false
+        type: boolean
+        default: false
       stable_release:
         description: Run stable-release signing preflight and mark the GitHub release as non-prerelease.
         required: false
@@ -21,6 +26,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  WHATSVAULT_RELEASE_DRAFT: ${{ inputs.publish_release == true && 'false' || 'true' }}
   WHATSVAULT_STABLE_RELEASE: ${{ inputs.stable_release == true && 'true' || 'false' }}
 
 jobs:
@@ -269,7 +275,7 @@ jobs:
             - WhatsApp export ZIP viewing is available with a bounded latest-message window for large exports.
             - iPhone backup chat rendering, bounded media preview, and bounded HTML export have local proof.
             - macOS and Windows bundles are unsigned until signing is configured.
-          releaseDraft: true
+          releaseDraft: ${{ env.WHATSVAULT_RELEASE_DRAFT == 'true' }}
           prerelease: ${{ env.WHATSVAULT_STABLE_RELEASE != 'true' }}
 
       - name: Generate release checksums

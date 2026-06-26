@@ -63,6 +63,7 @@ describe("GitHub workflow configuration", () => {
   it("wires release signing preflight without committing signing values", async () => {
     const releaseSource = await readFile(workflowPaths[1], "utf8");
 
+    expect(releaseSource).toContain("publish_release:");
     expect(releaseSource).toContain("stable_release:");
     expect(releaseSource).toContain("stable-signing-preflight:");
     expect(releaseSource).toContain("needs: stable-signing-preflight");
@@ -73,9 +74,37 @@ describe("GitHub workflow configuration", () => {
     expect(releaseSource).toContain("shell: bash");
     expect(releaseSource).toContain("APPLE_API_KEY_PRIVATE_KEY: ${{ secrets.APPLE_API_KEY_PRIVATE_KEY }}");
     expect(releaseSource).toContain("WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}");
+    expect(releaseSource).toContain(
+      "WHATSVAULT_RELEASE_DRAFT: ${{ inputs.publish_release == true && 'false' || 'true' }}",
+    );
+    expect(releaseSource).toContain(
+      "releaseDraft: ${{ env.WHATSVAULT_RELEASE_DRAFT == 'true' }}",
+    );
     expect(releaseSource).toContain("prerelease: ${{ env.WHATSVAULT_STABLE_RELEASE != 'true' }}");
     expect(releaseSource).not.toContain("Developer ID Application:");
     expect(releaseSource).not.toContain("secret-value");
+  });
+
+  it("keeps release publishing explicit while stable releases remain signing-gated", async () => {
+    const releaseSource = await readFile(workflowPaths[1], "utf8");
+    const publishInputIndex = releaseSource.indexOf("publish_release:");
+    const publishDefaultIndex = releaseSource.indexOf("default: false", publishInputIndex);
+    const draftEnvIndex = releaseSource.indexOf("WHATSVAULT_RELEASE_DRAFT");
+    const draftActionIndex = releaseSource.indexOf("releaseDraft:");
+    const prereleaseActionIndex = releaseSource.indexOf("prerelease:");
+    const stablePreflightIndex = releaseSource.indexOf("stable-signing-preflight:");
+    const matrixGateIndex = releaseSource.indexOf("needs.stable-signing-preflight.result == 'success'");
+
+    expect(publishInputIndex).toBeGreaterThan(-1);
+    expect(publishDefaultIndex).toBeGreaterThan(publishInputIndex);
+    expect(draftEnvIndex).toBeGreaterThan(publishInputIndex);
+    expect(draftActionIndex).toBeGreaterThan(draftEnvIndex);
+    expect(prereleaseActionIndex).toBeGreaterThan(draftActionIndex);
+    expect(stablePreflightIndex).toBeGreaterThan(-1);
+    expect(matrixGateIndex).toBeGreaterThan(stablePreflightIndex);
+    expect(releaseSource).toContain(
+      "if: always() && (inputs.stable_release != true || needs.stable-signing-preflight.result == 'success')",
+    );
   });
 
   it("runs strict signing preflight once before release matrix builds", async () => {

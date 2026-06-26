@@ -30,7 +30,7 @@ The bundle smoke job builds Tauri bundles on:
 
 `.github/workflows/release.yml` runs on version tags matching `v*` and manual dispatch.
 
-It builds draft pre-release artifacts for:
+It builds draft pre-release artifacts by default for:
 
 - macOS Apple Silicon
 - macOS Intel
@@ -42,9 +42,22 @@ The CI smoke workflow uses the same official Tauri action and the same target ma
 
 The release workflow reads the app version from `apps/desktop/src-tauri/tauri.conf.json` and fails early if a pushed tag does not match `v<app version>`.
 
+Manual release dispatch has two explicit inputs:
+
+- `publish_release`: when disabled, the GitHub Release remains a draft. When enabled, the workflow publishes the release.
+- `stable_release`: when disabled, the published release is marked as a pre-release. When enabled, the stable signing preflight must pass before any matrix build can publish a non-prerelease.
+
+Use these release modes:
+
+- Draft validation: `publish_release=false`, `stable_release=false`
+- Public unsigned pre-release: `publish_release=true`, `stable_release=false`
+- Public stable release: `publish_release=true`, `stable_release=true`
+
+Do not use the public stable mode until macOS signing, notarization, Windows signing, and clean-machine install checks have passed. Until then, public artifacts must remain pre-release and must keep the unsigned-bundle warning in the release body.
+
 Each bundle smoke job also runs `npm run release:checksums` after the Tauri build. This proves the release checksum generator can find the platform bundle outputs before a tagged release is attempted.
 
-Manual release dispatch includes a `stable_release` input. When it is enabled, a dedicated `stable-signing-preflight` job runs once before the build matrix. That job prepares temporary signing inputs, generates runtime-only Windows Tauri signing config, and runs `npm run release:preflight`. Matrix builds then import platform-specific certificates and build artifacts only after the once-per-release signing gate passes.
+When `stable_release` is enabled, a dedicated `stable-signing-preflight` job runs once before the build matrix. That job prepares temporary signing inputs, generates runtime-only Windows Tauri signing config, and runs `npm run release:preflight`. Matrix builds then import platform-specific certificates and build artifacts only after the once-per-release signing gate passes.
 
 Tagged releases upload target-specific checksum manifests next to the Tauri bundles:
 
