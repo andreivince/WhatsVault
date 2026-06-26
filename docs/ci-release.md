@@ -69,6 +69,17 @@ Tagged releases upload target-specific checksum manifests next to the Tauri bund
 
 The checksum command scans `target/release/bundle` plus target-specific Tauri roots such as `target/<target-triple>/release/bundle` by default. Use `WHATSVAULT_BUNDLE_DIR` only when checking one explicit bundle directory. It writes ignored release metadata to `target/release/release-metadata`.
 
+After checksum generation, the release workflow creates GitHub artifact attestations with `actions/attest@v4` using the same target-specific checksum manifest as the subject list. The checksum manifest remains the single source of truth for downloadable artifact names and digests; the attestation step must not maintain a separate artifact glob.
+
+Users with the GitHub CLI can verify a downloaded artifact against the release provenance:
+
+```sh
+gh attestation verify "/path/to/WhatsVault_0.1.0_aarch64.dmg" \
+  --repo andreivince/WhatsVault
+```
+
+Attestations improve provenance for published artifacts, but they do not replace code signing, notarization, or clean-machine install/open proof.
+
 ## Release Readiness Guard
 
 `npm run release:readiness` is an honesty guard. It exits successfully when the repository documents the current release blockers accurately.

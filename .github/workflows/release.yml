@@ -19,6 +19,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 concurrency:
   group: release-${{ github.workflow }}-${{ github.ref }}
@@ -309,6 +311,12 @@ jobs:
         env:
           WHATSVAULT_CHECKSUM_MANIFEST: ${{ matrix.checksum_manifest }}
         run: npm run release:checksums
+
+      - name: Attest release artifacts
+        uses: actions/attest@v4
+        with:
+          subject-checksums: target/release/release-metadata/${{ matrix.checksum_manifest }}
+          show-summary: true
 
       - name: Upload release checksums
         working-directory: apps/desktop

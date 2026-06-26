@@ -141,4 +141,23 @@ describe("GitHub workflow configuration", () => {
       "npm run release:preflight",
     );
   });
+
+  it("attests release artifacts from the checksum manifest before uploading checksums", async () => {
+    const releaseSource = await readFile(workflowPaths[1], "utf8");
+    const permissionsIndex = releaseSource.indexOf("permissions:");
+    const generateChecksumsIndex = releaseSource.indexOf("Generate release checksums");
+    const attestIndex = releaseSource.indexOf("Attest release artifacts");
+    const uploadChecksumsIndex = releaseSource.indexOf("Upload release checksums");
+
+    expect(permissionsIndex).toBeGreaterThan(-1);
+    expect(releaseSource.slice(permissionsIndex, generateChecksumsIndex)).toContain("id-token: write");
+    expect(releaseSource.slice(permissionsIndex, generateChecksumsIndex)).toContain("attestations: write");
+    expect(attestIndex).toBeGreaterThan(generateChecksumsIndex);
+    expect(uploadChecksumsIndex).toBeGreaterThan(attestIndex);
+    expect(releaseSource).toContain("uses: actions/attest@v4");
+    expect(releaseSource).toContain(
+      "subject-checksums: target/release/release-metadata/${{ matrix.checksum_manifest }}",
+    );
+    expect(releaseSource).not.toContain("subject-path: target/release/bundle");
+  });
 });

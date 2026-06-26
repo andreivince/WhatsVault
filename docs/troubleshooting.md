@@ -81,6 +81,17 @@ npm run release:signing
 
 The command lists missing macOS and Windows signing inputs by variable or config key name only. Do not paste certificate contents, passwords, private keys, real `.p12` files, or Apple notarization keys into public issues.
 
+## Release Attestation Verification Fails
+
+First confirm that the file came from the WhatsVault GitHub Release page and has not been renamed. Then verify against this repository:
+
+```sh
+gh attestation verify "/path/to/WhatsVault_0.1.0_aarch64.dmg" \
+  --repo andreivince/WhatsVault
+```
+
+Attestation verification only proves that GitHub Actions produced the artifact for this repository. It does not mean the current pre-alpha app is notarized, Developer ID signed, Windows signed, or stable-release ready.
+
 ## HTML Export Fails
 
 Check:
