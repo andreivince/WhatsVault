@@ -2,8 +2,12 @@ import { Download, File, X } from "lucide-react";
 import {
   type ChangeEvent,
   type FormEvent,
+  memo,
+  type RefObject,
+  useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -18,6 +22,10 @@ import {
 } from "../domain/chat";
 import { attachmentRenderKind, canRequestAttachmentPreview } from "../domain/media";
 import { DEFAULT_SOURCE_KIND, sourceProfile } from "../domain/source";
+import {
+  createTrailingVirtualTimelineWindow,
+  createVirtualTimelineWindow,
+} from "../domain/virtualTimeline";
 import type {
   Attachment,
   AttachmentPreview,
@@ -199,17 +207,13 @@ export function ConversationView({
           </button>
         ) : null}
         {visibleMessages.length > 0 ? (
-          visibleMessages.map((message) => (
-            <MessageBubble
-              key={message.id}
-              message={message}
-              source={source}
-              onOpenImagePreview={setImagePreview}
-              attachments={message.attachment_ids
-                .map((id) => attachmentMap.get(id))
-                .filter((attachment): attachment is Attachment => Boolean(attachment))}
-            />
-          ))
+          <VirtualizedMessageTimeline
+            messages={visibleMessages}
+            source={source}
+            attachmentMap={attachmentMap}
+            scrollParentRef={messageCanvasRef}
+            onOpenImagePreview={setImagePreview}
+          />
         ) : (
           <div className="no-results">
             {hasActiveFilters ? "No messages match these filters." : "No messages to show."}
@@ -223,18 +227,118 @@ export function ConversationView({
   );
 }
 
-function MessageBubble({
+function VirtualizedMessageTimeline({
+  messages,
+  source,
+  attachmentMap,
+  scrollParentRef,
+  onOpenImagePreview,
+}: {
+  messages: Message[];
+  source: LoadedChatSource | null;
+  attachmentMap: Map<string, Attachment>;
+  scrollParentRef: RefObject<HTMLDivElement | null>;
+  onOpenImagePreview: (preview: { dataUrl: string; alt: string; caption: string }) => void;
+}) {
+  const listRef = useRef<HTMLDivElement>(null);
+  const [virtualWindow, setVirtualWindow] = useState(() =>
+    createTrailingVirtualTimelineWindow(messages.length),
+  );
+
+  const updateVirtualWindow = useCallback(() => {
+    const scrollParent = scrollParentRef.current;
+    const list = listRef.current;
+    if (!scrollParent || !list) {
+      setVirtualWindow(createTrailingVirtualTimelineWindow(messages.length));
+      return;
+    }
+
+    setVirtualWindow(createVirtualTimelineWindow({
+      itemCount: messages.length,
+      scrollTop: scrollParent.scrollTop,
+      viewportHeight: scrollParent.clientHeight,
+      listTop: list.offsetTop,
+    }));
+  }, [messages.length, scrollParentRef]);
+
+  useLayoutEffect(() => {
+    updateVirtualWindow();
+  }, [updateVirtualWindow]);
+
+  useEffect(() => {
+    const scrollParent = scrollParentRef.current;
+    if (!scrollParent) {
+      return;
+    }
+
+    let animationFrame = 0;
+    const scheduleUpdate = () => {
+      cancelAnimationFrame(animationFrame);
+      animationFrame = requestAnimationFrame(updateVirtualWindow);
+    };
+
+    scrollParent.addEventListener("scroll", scheduleUpdate, { passive: true });
+    window.addEventListener("resize", scheduleUpdate);
+    scheduleUpdate();
+
+    return () => {
+      cancelAnimationFrame(animationFrame);
+      scrollParent.removeEventListener("scroll", scheduleUpdate);
+      window.removeEventListener("resize", scheduleUpdate);
+    };
+  }, [scrollParentRef, updateVirtualWindow]);
+
+  const renderedMessages = useMemo(
+    () => messages.slice(virtualWindow.startIndex, virtualWindow.endIndex),
+    [messages, virtualWindow.endIndex, virtualWindow.startIndex],
+  );
+
+  return (
+    <div
+      className="virtual-message-list"
+      ref={listRef}
+      data-testid={TEST_IDS.virtualMessageList}
+      data-total-messages={messages.length}
+      data-rendered-messages={virtualWindow.renderedCount}
+    >
+      <div
+        className="virtual-message-spacer"
+        style={{ height: virtualWindow.beforeHeight }}
+        aria-hidden="true"
+      />
+      {renderedMessages.map((message) => (
+        <MessageBubble
+          key={message.id}
+          message={message}
+          source={source}
+          onOpenImagePreview={onOpenImagePreview}
+          attachmentMap={attachmentMap}
+        />
+      ))}
+      <div
+        className="virtual-message-spacer"
+        style={{ height: virtualWindow.afterHeight }}
+        aria-hidden="true"
+      />
+    </div>
+  );
+}
+
+const MessageBubble = memo(function MessageBubble({
   message,
   source,
-  attachments,
+  attachmentMap,
   onOpenImagePreview,
 }: {
   message: Message;
   source: LoadedChatSource | null;
-  attachments: Attachment[];
+  attachmentMap: Map<string, Attachment>;
   onOpenImagePreview: (preview: { dataUrl: string; alt: string; caption: string }) => void;
 }) {
   const outgoing = isOutgoingMessage(message);
+  const attachments = message.attachment_ids
+    .map((id) => attachmentMap.get(id))
+    .filter((attachment): attachment is Attachment => Boolean(attachment));
 
   return (
     <article
@@ -262,7 +366,7 @@ function MessageBubble({
       </div>
     </article>
   );
-}
+});
 
 function AttachmentBlock({
   attachment,
