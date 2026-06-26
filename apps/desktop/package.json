@@ -34,7 +34,7 @@
     "@tauri-apps/cli": "^2.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "@vitejs/plugin-react": "^5.0.0",
+    "@vitejs/plugin-react": "^6.0.3",
     "playwright": "^1.61.0",
     "playwright-recast": "^0.19.0",
     "typescript": "^5.9.0",
