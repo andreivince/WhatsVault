@@ -108,7 +108,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 - Backup HTML export has a bounded implementation for selected backup chats, including media resolved through `Manifest.db`; it is enabled in the desktop UI after real local backup export smoke.
 - The desktop source screen separates the available WhatsApp export ZIP viewer from iPhone-backup proof work.
 - The desktop search field filters WhatsApp export ZIP messages through shared frontend domain helpers, searches iPhone-backup chat names through a bounded backend query, and searches selected iPhone-backup chats through a bounded backend query for latest matching messages.
-- The desktop timeline renders a bounded recent-message window with a tested "show earlier" path for already-loaded chats, while source importers avoid returning unbounded message vectors for huge backup or ZIP histories.
+- The desktop timeline renders a bounded recent-message window with a tested "show earlier" path and DOM virtualization for already-loaded chats, while source importers avoid returning unbounded message vectors for huge backup or ZIP histories.
 - The public synthetic demo renders a safe inline image preview and image-preview modal without using private media files.
 - The README links to a committed synthetic MP4 generated through the Playwright plus `playwright-recast` workflow.
 - The desktop visual suite covers keyboard focus visibility, accessible names for icon-only controls, contrast floors for core text, and removal of fake or unsupported action chrome.

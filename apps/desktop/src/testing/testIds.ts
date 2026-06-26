@@ -13,4 +13,5 @@ export const TEST_IDS = {
   mediaBlock: "media-block",
   messageBubble: "message-bubble",
   showEarlierButton: "show-earlier-button",
+  virtualMessageList: "virtual-message-list",
 } as const;

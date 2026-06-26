@@ -153,7 +153,7 @@ Frontend source handling should stay source-neutral:
 - `apps/desktop/src/services/desktop.ts` exposes source-neutral operations such as opening a local chat source, reading a local attachment preview, exporting the loaded chat, and listing local iPhone backup candidates.
 - React components receive a `LoadedChatSource` plus normalized `ChatImport` data. They should not call ZIP-specific or backup-specific commands directly.
 - The iPhone backup UI can show readable backup labels, encryption state when known, WhatsApp file-detection status, discovered chats for a selected ready backup, bounded backend search across backup chat names, selected backup chats in the shared timeline, bounded backend search for the selected chat, bounded media previews, and bounded HTML export. Real local backup smoke has verified chat rendering, media preview, and export without committing private artifacts.
-- The conversation timeline renders only a bounded recent message window by default and exposes an explicit "show earlier" action for older messages. This keeps large chats usable without requiring the UI to parse source-specific data.
+- The conversation timeline renders only a bounded recent message window by default, exposes an explicit "show earlier" action for older messages, and virtualizes the rendered DOM rows for that loaded window. This keeps large chats usable without requiring the UI to parse source-specific data or mount every loaded message at once.
 - Future iPhone backup work should extend the source profile and desktop service boundary instead of creating a parallel React flow.
 
 Media rendering rules:
