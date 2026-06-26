@@ -40,6 +40,15 @@ See [SECURITY.md](SECURITY.md) for the security reporting policy.
 
 Pre-alpha desktop builds are published on [GitHub Releases](https://github.com/andreivince/WhatsVault/releases) when release automation passes. Current bundles are not notarized or Developer ID signed on macOS and are not code signed on Windows, so they should be treated as early tester builds, not stable end-user releases.
 
+Release assets include SHA-256 checksum manifests. New releases also publish GitHub artifact attestations, which can be checked with:
+
+```sh
+gh attestation verify "/path/to/WhatsVault_0.1.0_aarch64.dmg" \
+  --repo andreivince/WhatsVault
+```
+
+Checksums and attestations prove provenance, not platform trust. A stable release still requires signed and notarized macOS output, Windows code signing, and clean-machine install/open proof.
+
 ## Current Direction
 
 The selected app direction is Tauri v2 with React and TypeScript:
