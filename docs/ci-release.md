@@ -30,7 +30,7 @@ The bundle smoke job builds Tauri bundles on:
 
 `.github/workflows/release.yml` runs on version tags matching `v*` and manual dispatch.
 
-It builds draft pre-release artifacts for:
+It builds draft pre-release artifacts by default for:
 
 - macOS Apple Silicon
 - macOS Intel
@@ -42,9 +42,24 @@ The CI smoke workflow uses the same official Tauri action and the same target ma
 
 The release workflow reads the app version from `apps/desktop/src-tauri/tauri.conf.json` and fails early if a pushed tag does not match `v<app version>`.
 
+Manual release dispatch has two explicit inputs:
+
+- `publish_release`: when disabled, the GitHub Release remains a draft. When enabled, the workflow publishes the release.
+- `stable_release`: when disabled, the published release is marked as a pre-release. When enabled, the stable signing preflight must pass before any matrix build can publish a non-prerelease.
+
+Use these release modes:
+
+- Draft validation: `publish_release=false`, `stable_release=false`
+- Public unsigned pre-release: `publish_release=true`, `stable_release=false`
+- Public stable release: `publish_release=true`, `stable_release=true`
+
+Do not use the public stable mode until macOS signing, notarization, Windows signing, and clean-machine install checks have passed. Until then, public artifacts must remain pre-release and must keep the unsigned-bundle warning in the release body.
+
+Unsigned pre-release macOS builds use Tauri's ad-hoc signing identity (`-`) when no Developer ID signing identity is configured. That avoids an empty-keychain identity failure in CI, but it is not notarization and does not satisfy the stable-release gate.
+
 Each bundle smoke job also runs `npm run release:checksums` after the Tauri build. This proves the release checksum generator can find the platform bundle outputs before a tagged release is attempted.
 
-Manual release dispatch includes a `stable_release` input. When it is enabled, a dedicated `stable-signing-preflight` job runs once before the build matrix. That job prepares temporary signing inputs, generates runtime-only Windows Tauri signing config, and runs `npm run release:preflight`. Matrix builds then import platform-specific certificates and build artifacts only after the once-per-release signing gate passes.
+When `stable_release` is enabled, a dedicated `stable-signing-preflight` job runs once before the build matrix. That job prepares temporary signing inputs, generates runtime-only Windows Tauri signing config, and runs `npm run release:preflight`. Matrix builds then import platform-specific certificates and build artifacts only after the once-per-release signing gate passes.
 
 Tagged releases upload target-specific checksum manifests next to the Tauri bundles:
 
@@ -78,7 +93,7 @@ Public-safe proof notes for these local checks live in [proof-evidence.md](proof
 
 ## Signing Status
 
-Current release artifacts are unsigned. The macOS Tauri config intentionally leaves `bundle.macOS.signingIdentity` unset because Tauri can read the signing identity from `APPLE_SIGNING_IDENTITY`, and the repository must not commit certificate-specific values. The Windows Tauri signing config is also absent until a concrete signing profile is selected.
+Current release artifacts are not trusted stable builds. The macOS Tauri config intentionally leaves `bundle.macOS.signingIdentity` unset because Tauri can read the signing identity from `APPLE_SIGNING_IDENTITY`, and the repository must not commit certificate-specific values. The release workflow supplies ad-hoc macOS signing for unsigned pre-releases and a real Developer ID identity only when signing secrets are configured. The Windows Tauri signing config is absent until a concrete signing profile is selected.
 
 Run the local signing readiness check:
 

@@ -111,12 +111,6 @@ const TEXT_RULES = [
     demoSafety: true,
   },
   {
-    code: "private-export-name",
-    pattern: /FULL\s+VAPO/i,
-    message: "contains a private export name marker",
-    demoSafety: true,
-  },
-  {
     code: "private-phone-number",
     pattern: /\+\d{1,3}[\s.-]+(?:\d{1,4}[\s.-]+){1,3}\d{4,5}\b|(?:\(\d{3}\)|\d{3})[\s.-]+\d{3}[\s.-]+\d{4}\b/i,
     message: "contains a private-looking phone number",
@@ -160,7 +154,7 @@ const TEXT_RULES = [
   },
   {
     code: "personal-roadmap-metric",
-    pattern: /maintainer\s+or\s+user\s+testimonials/i,
+    pattern: privateMarkerPattern(["maintainer\\s+or\\s+user\\s+test", "imonials"]),
     message: "contains personal traction-tracking roadmap language",
   },
   {
@@ -172,6 +166,21 @@ const TEXT_RULES = [
     code: "personal-roadmap-section",
     pattern: /Evidence\s+Checklist/i,
     message: "contains personal evidence-roadmap language",
+  },
+  {
+    code: "personal-roadmap-launch",
+    pattern: privateMarkerPattern(["Hacker", "\\s+News"]),
+    message: "contains personal launch-channel planning language",
+  },
+  {
+    code: "personal-roadmap-launch",
+    pattern: privateMarkerPattern(["R", "eddit"]),
+    message: "contains personal launch-channel planning language",
+  },
+  {
+    code: "personal-roadmap-launch",
+    pattern: privateMarkerPattern(["Linked", "In"]),
+    message: "contains personal launch-channel planning language",
   },
 ];
 

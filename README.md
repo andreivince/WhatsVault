@@ -36,6 +36,10 @@ Real backups, exported chats, SQLite databases, media, and private fixtures must
 
 See [SECURITY.md](SECURITY.md) for the security reporting policy.
 
+## Downloads
+
+Pre-alpha desktop builds are published on [GitHub Releases](https://github.com/andreivince/WhatsVault/releases) when release automation passes. Current bundles are not notarized or Developer ID signed on macOS and are not code signed on Windows, so they should be treated as early tester builds, not stable end-user releases.
+
 ## Current Direction
 
 The selected app direction is Tauri v2 with React and TypeScript:
