@@ -107,6 +107,22 @@ describe("GitHub workflow configuration", () => {
     );
   });
 
+  it("does not pass empty macOS signing secrets directly to the Tauri release action", async () => {
+    const releaseSource = await readFile(workflowPaths[1], "utf8");
+    const actionStepIndex = releaseSource.indexOf("Build and upload Tauri artifacts");
+    const actionWithIndex = releaseSource.indexOf("with:", actionStepIndex);
+    const actionEnvBlock = releaseSource.slice(actionStepIndex, actionWithIndex);
+
+    expect(actionStepIndex).toBeGreaterThan(-1);
+    expect(actionWithIndex).toBeGreaterThan(actionStepIndex);
+    expect(actionEnvBlock).not.toContain(
+      "APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}",
+    );
+    expect(actionEnvBlock).not.toContain("APPLE_ID: ${{ secrets.APPLE_ID }}");
+    expect(releaseSource).toContain("Export macOS release signing environment");
+    expect(releaseSource).toContain("APPLE_SIGNING_IDENTITY=-");
+  });
+
   it("runs strict signing preflight once before release matrix builds", async () => {
     const releaseSource = await readFile(workflowPaths[1], "utf8");
     const preflightJobIndex = releaseSource.indexOf("stable-signing-preflight:");

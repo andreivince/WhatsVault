@@ -197,6 +197,38 @@ jobs:
             echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY" >> "$GITHUB_ENV"
           fi
 
+      - name: Export macOS release signing environment
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          append_env() {
+            local name="$1"
+            local value="${!name:-}"
+            if [ -n "$value" ]; then
+              {
+                printf '%s<<WHATSVAULT_ENV_EOF\n' "$name"
+                printf '%s\n' "$value"
+                printf 'WHATSVAULT_ENV_EOF\n'
+              } >> "$GITHUB_ENV"
+            fi
+          }
+
+          append_env APPLE_API_ISSUER
+          append_env APPLE_API_KEY
+          append_env APPLE_ID
+          append_env APPLE_PASSWORD
+          append_env APPLE_TEAM_ID
+
+          if [ -z "${APPLE_SIGNING_IDENTITY:-}" ] && [ "$WHATSVAULT_STABLE_RELEASE" != "true" ]; then
+            echo "APPLE_SIGNING_IDENTITY=-" >> "$GITHUB_ENV"
+          fi
+
       - name: Import Windows signing certificate
         if: runner.os == 'Windows'
         shell: pwsh
@@ -256,12 +288,6 @@ jobs:
         uses: tauri-apps/tauri-action@v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           projectPath: apps/desktop
           tauriScript: npm run tauri
@@ -274,7 +300,7 @@ jobs:
             Known limits:
             - WhatsApp export ZIP viewing is available with a bounded latest-message window for large exports.
             - iPhone backup chat rendering, bounded media preview, and bounded HTML export have local proof.
-            - macOS and Windows bundles are unsigned until signing is configured.
+            - macOS bundles are not Developer ID signed or notarized, and Windows bundles are unsigned until signing is configured.
           releaseDraft: ${{ env.WHATSVAULT_RELEASE_DRAFT == 'true' }}
           prerelease: ${{ env.WHATSVAULT_STABLE_RELEASE != 'true' }}
 
