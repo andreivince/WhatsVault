@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   buildAttachmentMap,
@@ -43,6 +43,7 @@ import {
   searchIphoneBackupChat,
   searchIphoneBackupChats,
 } from "./services/desktop";
+import { createLatestRequestGate } from "./services/latestRequest";
 import { TEST_IDS } from "./testing/testIds";
 import type {
   BackupChatListSearchStatus,
@@ -88,6 +89,7 @@ const EMPTY_BACKUP_CHAT_LIST_SEARCH_STATUS: BackupChatListSearchStatus = {
 const BACKUP_SEARCH_DEBOUNCE_MS = 180;
 
 export function App() {
+  const backupSelectionRequests = useRef(createLatestRequestGate());
   const [source, setSource] = useState<LoadedChatSource | null>(null);
   const [imported, setImported] = useState<ChatImport | null>(null);
   const [query, setQuery] = useState("");
@@ -521,6 +523,7 @@ export function App() {
   }
 
   function resetBackupSelection() {
+    backupSelectionRequests.current.invalidate();
     setSelectedBackup(null);
     setBackupChats([]);
     setBackupChatListWindow(EMPTY_BACKUP_CHAT_LIST_WINDOW);
@@ -530,6 +533,7 @@ export function App() {
   }
 
   async function selectBackup(backup: IphoneBackupCandidate) {
+    const isCurrentRequest = backupSelectionRequests.current.begin();
     const readiness = backupReadiness(backup);
     setSelectedBackup(backup);
     setBackupChats([]);
@@ -552,6 +556,10 @@ export function App() {
             limit: 0,
           }
         : await listIphoneBackupChats(backup);
+      if (!isCurrentRequest()) {
+        return;
+      }
+
       setBackupChats(result.chats);
       setBackupChatListWindow({
         isTruncated: result.isTruncated,
@@ -559,6 +567,10 @@ export function App() {
       });
       setBackupChatState("ready");
     } catch (error) {
+      if (!isCurrentRequest()) {
+        return;
+      }
+
       setBackupChats([]);
       setBackupChatListWindow(EMPTY_BACKUP_CHAT_LIST_WINDOW);
       setBackupChatError(error instanceof Error ? error.message : String(error));
