@@ -140,6 +140,10 @@ Desktop command support modules keep shared Tauri boundary rules centralized:
 - `apps/desktop/src-tauri/src/source_registry.rs` owns opaque source handles for local backup and export paths.
 - `apps/desktop/src-tauri/src/public_error.rs` owns redacted user-facing command errors.
 
+Source handles are unique for each registration cycle. Refreshing backup candidates retires the
+previous backup handles, and opening a new export retires the previous export path, so stale UI
+state cannot resolve to a different local source and registry memory stays bounded.
+
 Tauri path boundary rules:
 
 - Native open/save dialogs live in Rust commands, not JavaScript.
