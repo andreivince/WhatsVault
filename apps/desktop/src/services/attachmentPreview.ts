@@ -87,8 +87,6 @@ export function createAttachmentPreviewLoader(
     },
     clear() {
       cache.clear();
-      pendingReads.splice(0, pendingReads.length);
-      activeReads = 0;
     },
   };
 }

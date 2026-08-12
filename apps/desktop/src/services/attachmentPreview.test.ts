@@ -29,6 +29,15 @@ function preview(id: string): AttachmentPreview {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
+
+  return { promise, resolve };
+}
+
 describe("attachmentPreviewLoader", () => {
   it("deduplicates concurrent requests for the same source attachment", async () => {
     let readCount = 0;
@@ -70,5 +79,57 @@ describe("attachmentPreviewLoader", () => {
     await Promise.all(requests);
 
     expect(maxActiveReads).toBe(2);
+  });
+
+  it("does not abandon queued preview reads when the cache is cleared", async () => {
+    const firstRelease = deferred<void>();
+    const loader = createAttachmentPreviewLoader({
+      concurrency: 1,
+      readPreview: async (_source, requestedAttachment) => {
+        if (requestedAttachment.id === "photo-1") {
+          await firstRelease.promise;
+        }
+        return preview(requestedAttachment.id);
+      },
+    });
+
+    const firstRequest = loader.load(source, attachment("photo-1"));
+    const queuedRequest = loader.load(source, attachment("photo-2"));
+    loader.clear();
+    firstRelease.resolve();
+
+    await expect(firstRequest).resolves.toEqual(preview("photo-1"));
+    const queuedResult = await Promise.race([
+      queuedRequest,
+      new Promise<"timed-out">((resolve) => setTimeout(() => resolve("timed-out"), 25)),
+    ]);
+    expect(queuedResult).toEqual(preview("photo-2"));
+  });
+
+  it("preserves the concurrency bound when clearing during an active read", async () => {
+    const releases = [deferred<void>(), deferred<void>()];
+    let activeReads = 0;
+    let maxActiveReads = 0;
+    const loader = createAttachmentPreviewLoader({
+      concurrency: 1,
+      readPreview: async (_source, requestedAttachment) => {
+        activeReads += 1;
+        maxActiveReads = Math.max(maxActiveReads, activeReads);
+        await releases[Number(requestedAttachment.id.at(-1)) - 1].promise;
+        activeReads -= 1;
+        return preview(requestedAttachment.id);
+      },
+    });
+
+    const firstRequest = loader.load(source, attachment("photo-1"));
+    loader.clear();
+    const secondRequest = loader.load(source, attachment("photo-2"));
+
+    expect(maxActiveReads).toBe(1);
+    releases[0].resolve();
+    await firstRequest;
+    releases[1].resolve();
+    await secondRequest;
+    expect(maxActiveReads).toBe(1);
   });
 });
