@@ -32,7 +32,8 @@ use whatsvault_core::{
         list_chat_storage_chats_limited, search_chat_storage_chat_recent,
         search_chat_storage_chats_limited,
     },
-    AttachmentKind, BackupCandidate, BackupMetadata, ChatImport, ImportIssue, ImportIssueCode,
+    Attachment, AttachmentKind, BackupCandidate, BackupMetadata, ChatImport, ImportIssue,
+    ImportIssueCode,
 };
 
 use dtos::{
@@ -46,12 +47,21 @@ use source_registry::{
 };
 
 const ATTACHMENT_PREVIEW_MAX_BYTES: u64 = 8 * 1024 * 1024;
-const ATTACHMENT_EXPORT_MAX_BYTES: u64 = 24 * 1024 * 1024;
-const TOTAL_EXPORT_EMBEDDED_MEDIA_MAX_BYTES: u64 = 128 * 1024 * 1024;
 const BACKUP_CHAT_LIST_MAX_ROWS: usize = 1_000;
 const BACKUP_CHAT_SEARCH_MAX_ROWS: usize = 200;
 const BACKUP_CHAT_IMPORT_MAX_MESSAGES: usize = 2_000;
 const BACKUP_CHAT_SEARCH_MAX_RESULTS: usize = 500;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AttachmentEmbeddingLimits {
+    max_file_bytes: u64,
+    max_total_bytes: u64,
+}
+
+const HTML_EXPORT_MEDIA_LIMITS: AttachmentEmbeddingLimits = AttachmentEmbeddingLimits {
+    max_file_bytes: 24 * 1024 * 1024,
+    max_total_bytes: 128 * 1024 * 1024,
+};
 
 #[tauri::command]
 fn list_iphone_backups(
@@ -349,22 +359,8 @@ fn export_whatsapp_export_html_file(
     .map_err(|error| PublicError::SelectedSourceImportFailed.redact(error))?;
     let imported = import_result.imported;
     let mut embedded_attachments = Vec::new();
-    let mut embedded_media_bytes = 0_u64;
-    let mut requested_attachments = Vec::new();
-
-    for attachment in &imported.attachments {
-        if attachment.size_bytes > ATTACHMENT_EXPORT_MAX_BYTES {
-            continue;
-        }
-        if embedded_media_bytes.saturating_add(attachment.size_bytes)
-            > TOTAL_EXPORT_EMBEDDED_MEDIA_MAX_BYTES
-        {
-            continue;
-        }
-
-        embedded_media_bytes = embedded_media_bytes.saturating_add(attachment.size_bytes);
-        requested_attachments.push(attachment);
-    }
+    let requested_attachments =
+        select_attachments_within_budget(&imported.attachments, HTML_EXPORT_MEDIA_LIMITS);
 
     let payloads = read_whatsapp_export_attachments(
         File::open(source_path)
@@ -372,7 +368,7 @@ fn export_whatsapp_export_html_file(
         requested_attachments
             .iter()
             .map(|attachment| attachment.archive_path.as_str()),
-        ATTACHMENT_EXPORT_MAX_BYTES,
+        HTML_EXPORT_MEDIA_LIMITS.max_file_bytes,
     )
     .map_err(|error| PublicError::HtmlExportFailed.redact(error))?;
 
@@ -435,22 +431,8 @@ fn export_iphone_backup_chat_html_file(
     let skipped_message_count =
         count_skipped_messages(total_message_count, imported.messages.len());
     let mut embedded_attachments = Vec::new();
-    let mut embedded_media_bytes = 0_u64;
-    let mut requested_attachments = Vec::new();
-
-    for attachment in &imported.attachments {
-        if attachment.size_bytes > ATTACHMENT_EXPORT_MAX_BYTES {
-            continue;
-        }
-        if embedded_media_bytes.saturating_add(attachment.size_bytes)
-            > TOTAL_EXPORT_EMBEDDED_MEDIA_MAX_BYTES
-        {
-            continue;
-        }
-
-        embedded_media_bytes = embedded_media_bytes.saturating_add(attachment.size_bytes);
-        requested_attachments.push(attachment);
-    }
+    let requested_attachments =
+        select_attachments_within_budget(&imported.attachments, HTML_EXPORT_MEDIA_LIMITS);
 
     let manifest_db_path = backup_path.join("Manifest.db");
     let resolved_media_paths = resolve_whatsapp_media_file_paths(
@@ -469,7 +451,7 @@ fn export_iphone_backup_chat_html_file(
         };
 
         let Some((bytes, _size_bytes)) =
-            read_attachment_file_bytes(media_path, ATTACHMENT_EXPORT_MAX_BYTES)?
+            read_attachment_file_bytes(media_path, HTML_EXPORT_MEDIA_LIMITS.max_file_bytes)?
         else {
             continue;
         };
@@ -559,6 +541,30 @@ fn write_chat_html_export(
         exported_message_count: imported.messages.len(),
         skipped_message_count,
     })
+}
+
+fn select_attachments_within_budget(
+    attachments: &[Attachment],
+    limits: AttachmentEmbeddingLimits,
+) -> Vec<&Attachment> {
+    let mut selected_bytes = 0_u64;
+    let mut selected = Vec::new();
+
+    for attachment in attachments {
+        if attachment.size_bytes > limits.max_file_bytes {
+            continue;
+        }
+
+        let next_total = selected_bytes.saturating_add(attachment.size_bytes);
+        if next_total > limits.max_total_bytes {
+            continue;
+        }
+
+        selected_bytes = next_total;
+        selected.push(attachment);
+    }
+
+    selected
 }
 
 fn select_iphone_backup_folder_path(app: &AppHandle) -> Result<Option<PathBuf>, String> {
@@ -788,11 +794,48 @@ mod tests {
         import_iphone_backup_chat_from_path, list_iphone_backup_chats_from_path,
         read_iphone_backup_attachment_preview_from_path, register_backup_candidate_dtos,
         safe_html_default_filename, search_iphone_backup_chat_from_path,
-        search_iphone_backup_chats_from_path, source_display_name, PublicError, SourceRegistry,
+        search_iphone_backup_chats_from_path, select_attachments_within_budget,
+        source_display_name, AttachmentEmbeddingLimits, PublicError, SourceRegistry,
         BACKUP_CHAT_IMPORT_MAX_MESSAGES, BACKUP_CHAT_LIST_MAX_ROWS, BACKUP_CHAT_SEARCH_MAX_RESULTS,
         BACKUP_CHAT_SEARCH_MAX_ROWS, DEFAULT_WHATSAPP_EXPORT_IMPORT_MAX_MESSAGES,
     };
-    use whatsvault_core::{BackupCandidate, BackupMetadata};
+    use whatsvault_core::{Attachment, BackupCandidate, BackupMetadata};
+
+    #[test]
+    fn export_attachment_budget_has_one_ordered_selection_rule() {
+        let attachments = [
+            synthetic_attachment("oversized", 6),
+            synthetic_attachment("first", 4),
+            synthetic_attachment("over-total", 2),
+            synthetic_attachment("boundary", 1),
+        ];
+
+        let selected = select_attachments_within_budget(
+            &attachments,
+            AttachmentEmbeddingLimits {
+                max_file_bytes: 5,
+                max_total_bytes: 5,
+            },
+        );
+
+        assert_eq!(
+            selected
+                .into_iter()
+                .map(|attachment| attachment.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["first", "boundary"]
+        );
+    }
+
+    fn synthetic_attachment(id: &str, size_bytes: u64) -> Attachment {
+        Attachment {
+            id: id.to_owned(),
+            archive_path: format!("Message/Media/{id}.jpg"),
+            filename: format!("{id}.jpg"),
+            kind: AttachmentKind::Photo,
+            size_bytes,
+        }
+    }
 
     #[test]
     fn maps_previewable_export_media_to_browser_media_types() {
