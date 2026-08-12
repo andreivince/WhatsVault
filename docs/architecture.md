@@ -143,6 +143,8 @@ Desktop command support modules keep shared Tauri boundary rules centralized:
 Tauri path boundary rules:
 
 - Native open/save dialogs live in Rust commands, not JavaScript.
+- Desktop commands are asynchronous, and blocking filesystem, ZIP, SQLite, media, and export work
+  runs through the backend's centralized blocking-task adapter instead of the main UI thread.
 - React receives opaque source handles and safe display names, not real backup paths, export paths, backup IDs, or file IDs.
 - Command results must not echo private output paths. Success can report counts and status only.
 - User-facing command errors should be classified and redacted by default.
