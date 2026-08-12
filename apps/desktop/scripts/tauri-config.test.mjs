@@ -8,6 +8,7 @@ const appDir = dirname(scriptDir);
 const tauriDir = join(appDir, "src-tauri");
 const configPath = join(tauriDir, "tauri.conf.json");
 const capabilitiesPath = join(tauriDir, "capabilities", "default.json");
+const backendLibraryPath = join(tauriDir, "src", "lib.rs");
 
 async function readConfig() {
   return JSON.parse(await readFile(configPath, "utf8"));
@@ -103,5 +104,19 @@ describe("Tauri release configuration", () => {
     expect(capability.permissions).toContain("core:window:allow-minimize");
     expect(capability.permissions).toContain("core:window:allow-toggle-maximize");
     expect(capability.permissions).not.toContain("core:window:allow-maximize");
+  });
+
+  it("keeps every desktop command asynchronous so local I/O cannot run on the main thread", async () => {
+    const backendLibrary = await readFile(backendLibraryPath, "utf8");
+    const commandDeclarations = [
+      ...backendLibrary.matchAll(/#\[tauri::command\]\s+(async\s+)?fn\s+(\w+)/g),
+    ];
+    const synchronousCommands = commandDeclarations
+      .filter(([, asyncKeyword]) => !asyncKeyword)
+      .map(([, , commandName]) => commandName);
+
+    expect(commandDeclarations.length).toBeGreaterThan(0);
+    expect(synchronousCommands).toEqual([]);
+    expect(backendLibrary).toContain("tauri::async_runtime::spawn_blocking");
   });
 });
