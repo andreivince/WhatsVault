@@ -19,7 +19,7 @@ import {
 import { ChatSidebar } from "./components/ChatSidebar";
 import { ConversationView } from "./components/ConversationView";
 import { EmptyConversation } from "./components/EmptyConversation";
-import { WindowControls } from "./components/WindowControls";
+import { AppTitlebar } from "./components/AppTitlebar";
 import {
   backupReadiness,
   createDemoChatSource,
@@ -649,7 +649,7 @@ export function App() {
 
   return (
     <main className="app-shell" data-testid={TEST_IDS.appShell}>
-      <WindowControls />
+      <AppTitlebar />
       <ChatSidebar
         activeBackupChatId={source?.kind === "iphone_backup" ? source.chatId ?? null : null}
         backupChatState={backupChatState}

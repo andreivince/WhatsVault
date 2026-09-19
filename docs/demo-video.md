@@ -9,6 +9,8 @@ Current approach:
 3. Render the trace into a polished MP4 with `playwright-recast`.
 4. Publish only synthetic demo output in README assets.
 
+The recording viewport and video canvas share a 1920 × 1080 size, matching the renderer's explicit 1080p output. Keep the 16:9 aspect ratio so avatars, icons, and text are not stretched during rendering; the walkthrough checks this before recording.
+
 Commands:
 
 ```sh
@@ -49,6 +51,8 @@ In another terminal:
 cd apps/desktop
 npm run demo:screenshot
 ```
+
+The capture waits for the synthetic image and fonts, then frames the latest messages. It fails if either media attachment is clipped, so changes to the title bar or timeline cannot silently crop the demo. Inspect the generated PNG, then update its SHA-256 entry in `docs/assets/demo-assets-manifest.json` before running `npm run hygiene:public`.
 
 Subtitle source lives at `apps/desktop/demo/readme-demo.srt`. Burned-in subtitles are opt-in because ffmpeg subtitle-filter path handling must be verified on both macOS and Windows:
 

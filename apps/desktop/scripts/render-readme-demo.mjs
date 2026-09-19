@@ -30,6 +30,8 @@ const args = [
   inputDir,
   "-o",
   outputPath,
+  "--resolution",
+  "1080p",
   "--speed-idle",
   "1.0",
   "--speed-action",
