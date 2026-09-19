@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   buildAttachmentMap,
@@ -43,6 +43,7 @@ import {
   searchIphoneBackupChat,
   searchIphoneBackupChats,
 } from "./services/desktop";
+import { createLatestRequestGate } from "./services/latestRequest";
 import { TEST_IDS } from "./testing/testIds";
 import type {
   BackupChatListSearchStatus,
@@ -88,6 +89,8 @@ const EMPTY_BACKUP_CHAT_LIST_SEARCH_STATUS: BackupChatListSearchStatus = {
 const BACKUP_SEARCH_DEBOUNCE_MS = 180;
 
 export function App() {
+  const backupSelectionRequests = useRef(createLatestRequestGate());
+  const backupScanRequests = useRef(createLatestRequestGate());
   const [source, setSource] = useState<LoadedChatSource | null>(null);
   const [imported, setImported] = useState<ChatImport | null>(null);
   const [query, setQuery] = useState("");
@@ -117,6 +120,11 @@ export function App() {
     message: null,
   });
   const demoMode = useMemo(() => new URLSearchParams(window.location.search).get("demo"), []);
+
+  useEffect(() => () => {
+    backupSelectionRequests.current.invalidate();
+    backupScanRequests.current.invalidate();
+  }, []);
 
   useEffect(() => {
     if (demoMode === "1") {
@@ -454,11 +462,7 @@ export function App() {
 
       setSource(result.source);
       setImported(result.imported);
-      setSelectedBackup(null);
-      setBackupChats([]);
-      setBackupChatListWindow(EMPTY_BACKUP_CHAT_LIST_WINDOW);
-      setBackupChatState("idle");
-      setBackupChatError(null);
+      resetBackupSelection();
       setQuery("");
       setSelectedDate("");
       setMessageLimit(INITIAL_MESSAGE_LIMIT);
@@ -473,15 +477,23 @@ export function App() {
   }
 
   async function refreshBackups() {
+    const isCurrentRequest = backupScanRequests.current.begin();
     setBackupScanError(null);
     setBackupScanState("loading");
     resetBackupSelection();
 
     try {
       const candidates = await listIphoneBackups();
+      if (!isCurrentRequest()) {
+        return;
+      }
+      resetBackupSelection();
       setBackupCandidates(candidates);
       setBackupScanState("ready");
     } catch (error) {
+      if (!isCurrentRequest()) {
+        return;
+      }
       setBackupScanError(error instanceof Error ? error.message : String(error));
       setBackupCandidates([]);
       setBackupScanState("error");
@@ -489,17 +501,22 @@ export function App() {
   }
 
   async function chooseBackupFolder() {
+    const isCurrentRequest = backupScanRequests.current.begin();
     setBackupScanError(null);
     setBackupScanState("loading");
     resetBackupSelection();
 
     try {
       const candidates = await chooseIphoneBackupFolder();
+      if (!isCurrentRequest()) {
+        return;
+      }
       if (!candidates) {
         setBackupScanState(backupCandidates.length > 0 ? "ready" : "idle");
         return;
       }
 
+      resetBackupSelection();
       setBackupCandidates(candidates);
       setBackupScanState("ready");
       if (candidates.length === 0) {
@@ -514,6 +531,9 @@ export function App() {
         await selectBackup(firstReadyBackup);
       }
     } catch (error) {
+      if (!isCurrentRequest()) {
+        return;
+      }
       setBackupScanError(error instanceof Error ? error.message : String(error));
       setBackupCandidates([]);
       setBackupScanState("error");
@@ -521,6 +541,7 @@ export function App() {
   }
 
   function resetBackupSelection() {
+    backupSelectionRequests.current.invalidate();
     setSelectedBackup(null);
     setBackupChats([]);
     setBackupChatListWindow(EMPTY_BACKUP_CHAT_LIST_WINDOW);
@@ -530,6 +551,7 @@ export function App() {
   }
 
   async function selectBackup(backup: IphoneBackupCandidate) {
+    const isCurrentRequest = backupSelectionRequests.current.begin();
     const readiness = backupReadiness(backup);
     setSelectedBackup(backup);
     setBackupChats([]);
@@ -552,6 +574,10 @@ export function App() {
             limit: 0,
           }
         : await listIphoneBackupChats(backup);
+      if (!isCurrentRequest()) {
+        return;
+      }
+
       setBackupChats(result.chats);
       setBackupChatListWindow({
         isTruncated: result.isTruncated,
@@ -559,6 +585,10 @@ export function App() {
       });
       setBackupChatState("ready");
     } catch (error) {
+      if (!isCurrentRequest()) {
+        return;
+      }
+
       setBackupChats([]);
       setBackupChatListWindow(EMPTY_BACKUP_CHAT_LIST_WINDOW);
       setBackupChatError(error instanceof Error ? error.message : String(error));
