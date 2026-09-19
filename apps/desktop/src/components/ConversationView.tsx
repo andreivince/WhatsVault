@@ -17,6 +17,7 @@ import {
   displayTimestamp,
   isOutgoingMessage,
   messageCountLabel,
+  messageDateRangeLabel,
   messageFilterResultLabel,
   messageWindowNotice,
 } from "../domain/chat";
@@ -38,6 +39,7 @@ import { isDesktopRuntime } from "../services/desktop";
 import { TEST_IDS } from "../testing/testIds";
 import type { ConversationBackupSearchStatus, ExportState } from "../viewState";
 import { Avatar } from "./Avatar";
+import { ImagePreviewModal } from "./ImagePreviewModal";
 
 export function ConversationView({
   imported,
@@ -83,6 +85,7 @@ export function ConversationView({
   const messageCanvasRef = useRef<HTMLDivElement>(null);
   const hasActiveFilters = Boolean(query.trim() || selectedDate);
   const importWindowNotice = messageWindowNotice(imported);
+  const dateRangeLabel = messageDateRangeLabel(visibleMessages);
   const backupSearchBannerLabel =
     backupSearchStatus.status === "loading"
       ? "Searching backup..."
@@ -195,7 +198,7 @@ export function ConversationView({
             {importWindowNotice}. Search and export use the loaded recent messages.
           </div>
         ) : null}
-        <div className="day-pill">Today</div>
+        {dateRangeLabel ? <div className="day-pill">{dateRangeLabel}</div> : null}
         {hiddenEarlierCount > 0 ? (
           <button
             className="show-earlier"
@@ -423,13 +426,15 @@ function AttachmentBlock({
         <button
           className="attachment-image-button"
           type="button"
-          onClick={() =>
+          onClick={(event) => {
+            // Safari does not focus buttons on pointer activation. Keep a return target for the dialog.
+            event.currentTarget.focus({ preventScroll: true });
             onOpenImagePreview({
               dataUrl: preview.dataUrl,
               alt: attachment.filename,
               caption: attachment.filename,
-            })
-          }
+            });
+          }}
           aria-label={`Open ${attachment.filename}`}
         >
           <img src={preview.dataUrl} alt={attachment.filename} />
@@ -474,38 +479,6 @@ function AttachmentBlock({
   return (
     <div className="attachment-chip" data-testid={TEST_IDS.mediaBlock}>
       <span>{previewState === "loading" ? "Loading media" : attachmentLabel(attachment.kind)}</span>
-    </div>
-  );
-}
-
-function ImagePreviewModal({
-  preview,
-  onClose,
-}: {
-  preview: { dataUrl: string; alt: string; caption: string };
-  onClose: () => void;
-}) {
-  useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    }
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
-
-  return (
-    <div className="preview-modal" role="dialog" aria-modal="true" aria-label={preview.caption}>
-      <button className="preview-backdrop" type="button" onClick={onClose} aria-label="Close preview" />
-      <figure className="preview-frame">
-        <button className="preview-close" type="button" onClick={onClose} aria-label="Close preview">
-          <X />
-        </button>
-        <img src={preview.dataUrl} alt={preview.alt} />
-        <figcaption>{preview.caption}</figcaption>
-      </figure>
     </div>
   );
 }
