@@ -132,4 +132,31 @@ describe("attachmentPreviewLoader", () => {
     await secondRequest;
     expect(maxActiveReads).toBe(1);
   });
+
+  it("keeps a replacement cache entry when a pre-clear read fails", async () => {
+    const firstRelease = deferred<void>();
+    let readCount = 0;
+    const loader = createAttachmentPreviewLoader({
+      readPreview: async (_source, requestedAttachment) => {
+        readCount += 1;
+        if (readCount === 1) {
+          await firstRelease.promise;
+          throw new Error("old read failed");
+        }
+        return preview(requestedAttachment.id);
+      },
+    });
+    const requestedAttachment = attachment("photo-1");
+    const oldRequest = loader.load(source, requestedAttachment);
+    const oldFailure = expect(oldRequest).rejects.toThrow("old read failed");
+    loader.clear();
+    const replacement = loader.load(source, requestedAttachment);
+    await replacement;
+    firstRelease.resolve();
+    await oldFailure;
+
+    expect(loader.load(source, requestedAttachment)).toBe(replacement);
+    expect(readCount).toBe(2);
+  });
+
 });

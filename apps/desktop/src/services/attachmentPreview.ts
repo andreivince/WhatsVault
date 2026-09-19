@@ -79,7 +79,9 @@ export function createAttachmentPreviewLoader(
       }
 
       const request = withReadSlot(() => readPreview(source, attachment)).catch((error) => {
-        cache.delete(cacheKey);
+        if (cache.get(cacheKey) === request) {
+          cache.delete(cacheKey);
+        }
         throw error;
       });
 
