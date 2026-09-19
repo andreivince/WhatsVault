@@ -159,4 +159,30 @@ describe("attachmentPreviewLoader", () => {
     expect(readCount).toBe(2);
   });
 
+
+  it("reserves a released read slot for an already queued request", async () => {
+    const releases = [deferred<AttachmentPreview>(), deferred<AttachmentPreview>(), deferred<AttachmentPreview>()];
+    const started: string[] = [];
+    const loader = createAttachmentPreviewLoader({
+      concurrency: 1,
+      readPreview: (_source, requestedAttachment) => {
+        started.push(requestedAttachment.id);
+        return releases[Number(requestedAttachment.id.at(-1)) - 1].promise;
+      },
+    });
+    const first = loader.load(source, attachment("photo-1"));
+    const second = loader.load(source, attachment("photo-2"));
+    loader.clear();
+    releases[0].resolve(preview("photo-1"));
+    const third = Promise.resolve().then(() => loader.load(source, attachment("photo-3")));
+    await first;
+    const startedBeforeSecondFinished = [...started];
+    releases[1].resolve(preview("photo-2"));
+    releases[2].resolve(preview("photo-3"));
+    await Promise.all([second, third]);
+
+    expect(startedBeforeSecondFinished).toEqual(["photo-1", "photo-2"]);
+    expect(started).toEqual(["photo-1", "photo-2", "photo-3"]);
+  });
+
 });
