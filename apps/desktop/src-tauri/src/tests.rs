@@ -9,7 +9,7 @@ use super::{
     export_iphone_backup_chat_html_file, export_whatsapp_export_html_file,
     import_iphone_backup_chat_from_path, list_iphone_backup_chats_from_path,
     read_iphone_backup_attachment_preview_from_path, register_backup_candidate_dtos,
-    safe_html_default_filename, search_iphone_backup_chat_from_path,
+    run_blocking_command, safe_html_default_filename, search_iphone_backup_chat_from_path,
     search_iphone_backup_chats_from_path, source_display_name, PublicError, SourceRegistry,
     BACKUP_CHAT_IMPORT_MAX_MESSAGES, BACKUP_CHAT_LIST_MAX_ROWS, BACKUP_CHAT_SEARCH_MAX_RESULTS,
     BACKUP_CHAT_SEARCH_MAX_ROWS, DEFAULT_WHATSAPP_EXPORT_IMPORT_MAX_MESSAGES,
@@ -916,4 +916,35 @@ fn create_searchable_chat_storage(path: &Path, recent_chat_count: usize) {
             .unwrap();
     }
     transaction.commit().unwrap();
+}
+
+#[test]
+fn blocking_command_adapter_runs_work_off_the_calling_thread() {
+    let calling_thread = std::thread::current().id();
+    let worker_thread =
+        tauri::async_runtime::block_on(run_blocking_command(|| Ok(std::thread::current().id())))
+            .unwrap();
+    assert_ne!(worker_thread, calling_thread);
+}
+
+#[test]
+fn blocking_command_adapter_preserves_operation_errors() {
+    let result = tauri::async_runtime::block_on(run_blocking_command(|| {
+        Err::<(), _>("Could not read the selected local source.".to_owned())
+    }));
+    assert_eq!(
+        result.unwrap_err(),
+        "Could not read the selected local source."
+    );
+}
+
+#[test]
+fn blocking_command_adapter_redacts_worker_panics() {
+    let result = tauri::async_runtime::block_on(run_blocking_command(|| -> Result<(), String> {
+        panic!("synthetic internal detail");
+    }));
+    assert_eq!(
+        result.unwrap_err(),
+        "Could not complete the local operation."
+    );
 }

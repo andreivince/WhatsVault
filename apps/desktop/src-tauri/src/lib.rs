@@ -10,7 +10,7 @@ use std::{
 };
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::{DialogExt, FilePath};
 use whatsvault_core::{
     exports::html::{build_chat_html_export, EmbeddedAttachment, HtmlExportOptions},
@@ -53,28 +53,40 @@ const BACKUP_CHAT_SEARCH_MAX_ROWS: usize = 200;
 const BACKUP_CHAT_IMPORT_MAX_MESSAGES: usize = 2_000;
 const BACKUP_CHAT_SEARCH_MAX_RESULTS: usize = 500;
 
+async fn run_blocking_command<T, F>(operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(operation)
+        .await
+        .map_err(|_| "Could not complete the local operation.".to_owned())?
+}
+
 #[tauri::command]
-fn list_iphone_backups(
-    registry: State<'_, SourceRegistryState>,
-) -> Result<Vec<IphoneBackupCandidateDto>, String> {
-    let candidates = discover_default_backup_candidates().map_err(|_| {
-        "Could not scan the default iPhone backup folders on this computer.".to_owned()
-    })?;
-    register_backup_candidate_dtos(&registry, &candidates)
+async fn list_iphone_backups(app: AppHandle) -> Result<Vec<IphoneBackupCandidateDto>, String> {
+    run_blocking_command(move || {
+        let candidates = discover_default_backup_candidates().map_err(|_| {
+            "Could not scan the default iPhone backup folders on this computer.".to_owned()
+        })?;
+        register_backup_candidate_dtos(&app.state::<SourceRegistryState>(), &candidates)
+    })
+    .await
 }
 
 #[tauri::command]
 async fn choose_iphone_backup_folder(
     app: AppHandle,
-    registry: State<'_, SourceRegistryState>,
 ) -> Result<Option<Vec<IphoneBackupCandidateDto>>, String> {
-    let Some(source_path) = select_iphone_backup_folder_path(&app)? else {
-        return Ok(None);
-    };
-    let candidates = discover_backup_candidates_from_selected_path(&source_path)
-        .map_err(|_| "Could not read iPhone backups from the selected folder.".to_owned())?;
-
-    register_backup_candidate_dtos(&registry, &candidates).map(Some)
+    run_blocking_command(move || {
+        let Some(source_path) = select_iphone_backup_folder_path(&app)? else {
+            return Ok(None);
+        };
+        let candidates = discover_backup_candidates_from_selected_path(&source_path)
+            .map_err(|_| "Could not read iPhone backups from the selected folder.".to_owned())?;
+        register_backup_candidate_dtos(&app.state::<SourceRegistryState>(), &candidates).map(Some)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -82,19 +94,26 @@ async fn open_whatsapp_export(
     app: AppHandle,
     registry: State<'_, SourceRegistryState>,
 ) -> Result<Option<OpenLocalChatSourceResultDto>, String> {
-    let Some(source_path) = select_whatsapp_export_path(&app)? else {
+    let Some((source_path, display_name, imported)) = run_blocking_command(move || {
+        let Some(source_path) = select_whatsapp_export_path(&app)? else {
+            return Ok(None);
+        };
+        let file = File::open(&source_path)
+            .map_err(|error| PublicError::SelectedSourceUnreadable.redact(error))?;
+        let imported = import_whatsapp_export_zip_with_options(
+            file,
+            WhatsappExportImportOptions::recent(DEFAULT_WHATSAPP_EXPORT_IMPORT_MAX_MESSAGES),
+        )
+        .map(|result| result.imported)
+        .map_err(|error| PublicError::SelectedSourceImportFailed.redact(error))?;
+        let display_name = source_display_name(&source_path);
+
+        Ok(Some((source_path, display_name, imported)))
+    })
+    .await?
+    else {
         return Ok(None);
     };
-
-    let file = File::open(&source_path)
-        .map_err(|error| PublicError::SelectedSourceUnreadable.redact(error))?;
-    let imported = import_whatsapp_export_zip_with_options(
-        file,
-        WhatsappExportImportOptions::recent(DEFAULT_WHATSAPP_EXPORT_IMPORT_MAX_MESSAGES),
-    )
-    .map(|result| result.imported)
-    .map_err(|error| PublicError::SelectedSourceImportFailed.redact(error))?;
-    let display_name = source_display_name(&source_path);
     let handle = registry
         .lock()
         .map_err(|_| "Could not access local source handles.".to_owned())?
@@ -112,12 +131,12 @@ async fn open_whatsapp_export(
 }
 
 #[tauri::command]
-fn list_iphone_backup_chats(
+async fn list_iphone_backup_chats(
     backup_handle: String,
     registry: State<'_, SourceRegistryState>,
 ) -> Result<IphoneBackupChatsResultDto, String> {
     let backup_path = registered_backup_path(&registry, &backup_handle)?;
-    list_iphone_backup_chats_from_path(&backup_path)
+    run_blocking_command(move || list_iphone_backup_chats_from_path(&backup_path)).await
 }
 
 fn list_iphone_backup_chats_from_path(
@@ -142,13 +161,13 @@ fn list_iphone_backup_chats_from_path(
 }
 
 #[tauri::command]
-fn search_iphone_backup_chats(
+async fn search_iphone_backup_chats(
     backup_handle: String,
     query: String,
     registry: State<'_, SourceRegistryState>,
 ) -> Result<IphoneBackupChatsResultDto, String> {
     let backup_path = registered_backup_path(&registry, &backup_handle)?;
-    search_iphone_backup_chats_from_path(&backup_path, &query)
+    run_blocking_command(move || search_iphone_backup_chats_from_path(&backup_path, &query)).await
 }
 
 fn search_iphone_backup_chats_from_path(
@@ -175,13 +194,13 @@ fn search_iphone_backup_chats_from_path(
 }
 
 #[tauri::command]
-fn import_iphone_backup_chat(
+async fn import_iphone_backup_chat(
     backup_handle: String,
     chat_id: String,
     registry: State<'_, SourceRegistryState>,
 ) -> Result<ChatImport, String> {
     let backup_path = registered_backup_path(&registry, &backup_handle)?;
-    import_iphone_backup_chat_from_path(&backup_path, &chat_id)
+    run_blocking_command(move || import_iphone_backup_chat_from_path(&backup_path, &chat_id)).await
 }
 
 fn import_iphone_backup_chat_from_path(
@@ -203,14 +222,17 @@ fn import_iphone_backup_chat_from_path(
 }
 
 #[tauri::command]
-fn search_iphone_backup_chat(
+async fn search_iphone_backup_chat(
     backup_handle: String,
     chat_id: String,
     query: String,
     registry: State<'_, SourceRegistryState>,
 ) -> Result<IphoneBackupChatSearchResultDto, String> {
     let backup_path = registered_backup_path(&registry, &backup_handle)?;
-    search_iphone_backup_chat_from_path(&backup_path, &chat_id, &query)
+    run_blocking_command(move || {
+        search_iphone_backup_chat_from_path(&backup_path, &chat_id, &query)
+    })
+    .await
 }
 
 fn search_iphone_backup_chat_from_path(
@@ -261,33 +283,36 @@ fn count_skipped_messages(total_message_count: u64, loaded_message_count: usize)
 }
 
 #[tauri::command]
-fn read_export_attachment_preview(
+async fn read_export_attachment_preview(
     source_handle: String,
     archive_path: String,
     registry: State<'_, SourceRegistryState>,
 ) -> Result<Option<AttachmentPreviewDto>, String> {
     let source_path = registered_export_path(&registry, &source_handle)?;
-    let file = File::open(source_path)
-        .map_err(|error| PublicError::SelectedSourceUnreadable.redact(error))?;
-    let Some(payload) =
-        read_whatsapp_export_attachment(file, &archive_path, ATTACHMENT_PREVIEW_MAX_BYTES)
-            .map_err(|error| PublicError::AttachmentPreviewFailed.redact(error))?
-    else {
-        return Ok(None);
-    };
-    let Some(media_type) = attachment_media_type(payload.kind, &payload.filename) else {
-        return Ok(None);
-    };
+    run_blocking_command(move || {
+        let file = File::open(source_path)
+            .map_err(|error| PublicError::SelectedSourceUnreadable.redact(error))?;
+        let Some(payload) =
+            read_whatsapp_export_attachment(file, &archive_path, ATTACHMENT_PREVIEW_MAX_BYTES)
+                .map_err(|error| PublicError::AttachmentPreviewFailed.redact(error))?
+        else {
+            return Ok(None);
+        };
+        let Some(media_type) = attachment_media_type(payload.kind, &payload.filename) else {
+            return Ok(None);
+        };
 
-    Ok(Some(attachment_preview_dto(
-        media_type,
-        payload.bytes,
-        payload.size_bytes,
-    )))
+        Ok(Some(attachment_preview_dto(
+            media_type,
+            payload.bytes,
+            payload.size_bytes,
+        )))
+    })
+    .await
 }
 
 #[tauri::command]
-fn read_iphone_backup_attachment_preview(
+async fn read_iphone_backup_attachment_preview(
     backup_handle: String,
     archive_path: String,
     filename: String,
@@ -295,7 +320,15 @@ fn read_iphone_backup_attachment_preview(
     registry: State<'_, SourceRegistryState>,
 ) -> Result<Option<AttachmentPreviewDto>, String> {
     let backup_path = registered_backup_path(&registry, &backup_handle)?;
-    read_iphone_backup_attachment_preview_from_path(&backup_path, &archive_path, &filename, kind)
+    run_blocking_command(move || {
+        read_iphone_backup_attachment_preview_from_path(
+            &backup_path,
+            &archive_path,
+            &filename,
+            kind,
+        )
+    })
+    .await
 }
 
 fn read_iphone_backup_attachment_preview_from_path(
@@ -328,11 +361,13 @@ async fn export_whatsapp_export_html(
     registry: State<'_, SourceRegistryState>,
 ) -> Result<Option<HtmlExportResultDto>, String> {
     let source_path = registered_export_path(&registry, &source_handle)?;
-    let Some(output_path) = select_html_export_path(&app, &default_filename)? else {
-        return Ok(None);
-    };
-
-    export_whatsapp_export_html_file(&source_path, &output_path, &title).map(Some)
+    run_blocking_command(move || {
+        let Some(output_path) = select_html_export_path(&app, &default_filename)? else {
+            return Ok(None);
+        };
+        export_whatsapp_export_html_file(&source_path, &output_path, &title).map(Some)
+    })
+    .await
 }
 
 fn export_whatsapp_export_html_file(
@@ -410,11 +445,13 @@ async fn export_iphone_backup_chat_html(
     registry: State<'_, SourceRegistryState>,
 ) -> Result<Option<HtmlExportResultDto>, String> {
     let backup_path = registered_backup_path(&registry, &backup_handle)?;
-    let Some(output_path) = select_html_export_path(&app, &default_filename)? else {
-        return Ok(None);
-    };
-
-    export_iphone_backup_chat_html_file(&backup_path, &chat_id, &output_path, &title).map(Some)
+    run_blocking_command(move || {
+        let Some(output_path) = select_html_export_path(&app, &default_filename)? else {
+            return Ok(None);
+        };
+        export_iphone_backup_chat_html_file(&backup_path, &chat_id, &output_path, &title).map(Some)
+    })
+    .await
 }
 
 fn export_iphone_backup_chat_html_file(
@@ -518,19 +555,19 @@ fn register_backup_candidate_dtos(
     registry: &SourceRegistryState,
     candidates: &[BackupCandidate],
 ) -> Result<Vec<IphoneBackupCandidateDto>, String> {
+    let mut dtos: Vec<_> = candidates
+        .iter()
+        .enumerate()
+        .map(|(index, candidate)| backup_candidate_dto(candidate, index, String::new()))
+        .collect();
     let mut registry = registry
         .lock()
         .map_err(|_| "Could not access local source handles.".to_owned())?;
     registry.clear_backups();
-
-    Ok(candidates
-        .iter()
-        .enumerate()
-        .map(|(index, candidate)| {
-            let handle = registry.register_backup(PathBuf::from(&candidate.path));
-            backup_candidate_dto(candidate, index, handle)
-        })
-        .collect())
+    for (candidate, dto) in candidates.iter().zip(&mut dtos) {
+        dto.handle = registry.register_backup(PathBuf::from(&candidate.path));
+    }
+    Ok(dtos)
 }
 
 fn write_chat_html_export(
