@@ -4,7 +4,7 @@ WhatsVault is a local-first desktop app for browsing WhatsApp chats and media fr
 
 Status: pre-alpha desktop viewer. WhatsApp export ZIP viewing works as the first local source path. The desktop app can scan default iPhone backup folders, show local backup/WhatsApp status, and route a selected ready backup into the shared chat-list/import UI path. Real local iPhone-backup proof has passed for `Manifest.db`, `ChatStorage.sqlite`, desktop chat rendering, bounded media preview, and bounded HTML export without committing private artifacts. Stable release remains blocked by signing/notarization and release hardening.
 
-![Synthetic WhatsVault desktop demo showing local backup chats, search, image media preview, date filtering, and export controls](docs/assets/whatsvault-synthetic-demo.png)
+![WhatsVault desktop showing synthetic local-backup chats, image and voice-message attachments, search, date filter, and HTML export controls](docs/assets/whatsvault-synthetic-demo.png)
 
 Screenshot and video use synthetic demo data only.
 

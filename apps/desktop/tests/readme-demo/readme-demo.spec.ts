@@ -7,6 +7,9 @@ import { TEST_IDS } from "../../src/testing/testIds";
 const DEMO_STEP_PAUSE_MS = 4_200;
 
 test("README demo walkthrough", async ({ page }) => {
+  // The renderer outputs 1080p. A different recording ratio stretches the UI.
+  expect(page.viewportSize()!.width / page.viewportSize()!.height).toBe(16 / 9);
+
   await test.step("Open the synthetic WhatsVault demo", async () => {
     await page.goto("/?demo=1");
 
@@ -28,10 +31,14 @@ test("README demo walkthrough", async ({ page }) => {
 
   await test.step("Show media in the conversation", async () => {
     await page.getByTestId(TEST_IDS.searchInput).fill("");
+    await page.getByTestId(TEST_IDS.messageBubble).last().scrollIntoViewIfNeeded();
 
     await expect(page.getByTestId(TEST_IDS.mediaBlock).first()).toBeVisible();
     await expect(page.getByRole("img", { name: "demo-photo.jpg" })).toBeVisible();
     await expect(page.getByText("Voice message", { exact: true })).toBeVisible();
+    for (const media of await page.getByTestId(TEST_IDS.mediaBlock).all()) {
+      await expect(media).toBeInViewport({ ratio: 1 });
+    }
     await page.waitForTimeout(DEMO_STEP_PAUSE_MS);
   });
 
