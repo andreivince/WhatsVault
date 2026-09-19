@@ -44,14 +44,20 @@ export function createAttachmentPreviewLoader(
   async function withReadSlot<T>(task: () => Promise<T>): Promise<T> {
     if (activeReads >= concurrency) {
       await new Promise<void>((resolve) => pendingReads.push(resolve));
+    } else {
+      activeReads += 1;
     }
 
-    activeReads += 1;
     try {
       return await task();
     } finally {
-      activeReads -= 1;
-      pendingReads.shift()?.();
+      const nextRead = pendingReads.shift();
+      if (nextRead) {
+        // Transfer this slot directly so a new request cannot overtake the queue.
+        nextRead();
+      } else {
+        activeReads -= 1;
+      }
     }
   }
 
@@ -79,7 +85,9 @@ export function createAttachmentPreviewLoader(
       }
 
       const request = withReadSlot(() => readPreview(source, attachment)).catch((error) => {
-        cache.delete(cacheKey);
+        if (cache.get(cacheKey) === request) {
+          cache.delete(cacheKey);
+        }
         throw error;
       });
 
@@ -87,8 +95,6 @@ export function createAttachmentPreviewLoader(
     },
     clear() {
       cache.clear();
-      pendingReads.splice(0, pendingReads.length);
-      activeReads = 0;
     },
   };
 }

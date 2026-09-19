@@ -119,4 +119,27 @@ describe("Tauri release configuration", () => {
     expect(synchronousCommands).toEqual([]);
     expect(backendLibrary).toContain("tauri::async_runtime::spawn_blocking");
   });
+
+  it("keeps native dialog waits and backup metadata preparation inside blocking tasks", async () => {
+    const backendLibrary = await readFile(backendLibraryPath, "utf8");
+    const blockingCalls = {
+      list_iphone_backups: ["register_backup_candidate_dtos"],
+      choose_iphone_backup_folder: ["select_iphone_backup_folder_path", "register_backup_candidate_dtos"],
+      open_whatsapp_export: ["select_whatsapp_export_path"],
+      export_whatsapp_export_html: ["select_html_export_path"],
+      export_iphone_backup_chat_html: ["select_html_export_path"],
+    };
+    for (const [command, calls] of Object.entries(blockingCalls)) {
+      const start = backendLibrary.indexOf(`async fn ${command}(`);
+      const body = backendLibrary.slice(start, backendLibrary.indexOf("\n}", start));
+      const taskStart = body.indexOf("run_blocking_command(");
+      const taskEnd = body.indexOf(".await", taskStart);
+      for (const call of calls) {
+        const callIndex = body.indexOf(`${call}(`);
+        expect(callIndex, `${command}: ${call} must run inside the blocking task`).toBeGreaterThan(taskStart);
+        expect(callIndex, `${command}: ${call} must precede the blocking task await`).toBeLessThan(taskEnd);
+      }
+    }
+  });
+
 });

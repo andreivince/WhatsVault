@@ -188,7 +188,7 @@ function dateKeyFromParts(year: number, month: number, day: number): string | nu
 
 export function messageDateKey(message: Message): string | null {
   const raw = message.timestamp.raw.trim();
-  const isoLike = raw.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})\b/);
+  const isoLike = raw.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?=$|[T\s,])/);
   if (isoLike) {
     return dateKeyFromParts(
       Number.parseInt(isoLike[1], 10),
@@ -218,6 +218,25 @@ export function filterMessagesByDate(messages: Message[], selectedDate: string):
   }
 
   return messages.filter((message) => messageDateKey(message) === normalizedDate);
+}
+
+export function messageDayLabel(message: Message, locale?: string): string {
+  const key = messageDateKey(message);
+  if (!key) return "Date unavailable";
+
+  // Preserve the transcript's calendar date instead of applying the viewer's time zone.
+  return new Intl.DateTimeFormat(locale, {
+    month: "short", day: "numeric", year: "numeric", timeZone: "UTC",
+  }).format(new Date(`${key}T00:00:00Z`));
+}
+
+export function messageDateRangeLabel(messages: Message[], locale?: string): string | null {
+  const first = messages[0];
+  const last = messages.at(-1);
+  if (!first || !last) return null;
+  const start = messageDayLabel(first, locale);
+  const end = messageDayLabel(last, locale);
+  return start === end ? start : `${start} to ${end}`;
 }
 
 export function createMessageWindow(messages: Message[], limit: number): Message[] {

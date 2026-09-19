@@ -57,7 +57,6 @@ export function ChatSidebar({
   );
   const activeBackupChat = sourceKind === "iphone_backup"
     ? backupChats.find((chat) => chat.id === activeBackupChatId)
-      ?? backupChats.find((chat) => chat.title === chatSummary?.title)
       ?? null
     : null;
   const backupChatListWindowLabel = backupChatListWindow.isTruncated
@@ -116,7 +115,8 @@ export function ChatSidebar({
             {visibleBackupChats.map((chat) => (
               <button
                 key={chat.id}
-                className={`chat-row${sourceKind === "iphone_backup" && chatSummary?.title === chat.title ? " selected" : ""}`}
+                className={`chat-row${chat.id === activeBackupChat?.id ? " selected" : ""}`}
+                aria-current={chat.id === activeBackupChat?.id ? "true" : undefined}
                 type="button"
                 disabled={openingBackupChatId === chat.id}
                 onClick={() => onOpenBackupChat(selectedBackupForChats, chat)}
