@@ -38,7 +38,7 @@ test("mobile backup chat keeps the selected avatar clear of the viewport edge", 
 test("mobile backup picker stays within the viewport", async ({ page }) => {
   await page.goto("/?demo=backups");
 
-  await expect(page.getByText("iPhone backups")).toBeVisible();
+  await expect(page.getByText("iPhone backups", { exact: true })).toBeVisible();
   await expect(page.getByText("Demo iPhone")).toBeVisible();
   await expectNoHorizontalOverflow(page);
 });
