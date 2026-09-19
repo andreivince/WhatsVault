@@ -11,7 +11,6 @@ const repoRoot = resolve(appDir, "../..");
 const screenshotPath = join(repoRoot, "docs", "assets", "whatsvault-synthetic-demo.png");
 const demoUrl = process.env.WHATSVAULT_DEMO_URL ?? "http://127.0.0.1:1420/?demo=backup-chat";
 const screenshotViewport = { width: 1440, height: 920 };
-const messageCanvasScrollTop = 120;
 
 mkdirSync(dirname(screenshotPath), { recursive: true });
 
@@ -25,10 +24,9 @@ try {
   await page.goto(demoUrl);
   await page.waitForSelector('[data-testid="app-shell"]');
   await page.waitForSelector('[data-testid="media-block"]');
-  await page.waitForSelector('img[alt="demo-photo.jpg"]');
-  await page.locator('[data-testid="message-canvas"]').evaluate((element, scrollTop) => {
-    element.scrollTo({ top: scrollTop });
-  }, messageCanvasScrollTop);
+  await page.locator('img[alt="demo-photo.jpg"]').evaluate((image) => image.decode());
+  await page.evaluate(() => document.fonts.ready);
+  await page.locator('[data-testid="message-bubble"]').last().scrollIntoViewIfNeeded();
 
   const metrics = await page.evaluate(() => {
     const bodyText = document.body.textContent ?? "";
@@ -74,7 +72,19 @@ try {
     throw new Error(`Screenshot route overflows horizontally: ${metrics.bodyWidth} > ${metrics.viewportWidth}.`);
   }
 
-  await page.screenshot({ path: screenshotPath, fullPage: false });
+  const mediaFits = await page.locator('[data-testid="media-block"]').evaluateAll((blocks) => {
+    const canvas = document.querySelector('[data-testid="message-canvas"]').getBoundingClientRect();
+    return blocks.every((block) => {
+      const box = block.getBoundingClientRect();
+      return box.top >= canvas.top && box.bottom <= canvas.bottom
+        && box.left >= canvas.left && box.right <= canvas.right;
+    });
+  });
+  if (!mediaFits) {
+    throw new Error("README screenshot must show both synthetic media attachments without clipping.");
+  }
+
+  await page.screenshot({ path: screenshotPath, fullPage: false, animations: "disabled" });
   console.log(`Captured README screenshot: ${screenshotPath}`);
 } finally {
   await browser.close();

@@ -6,6 +6,7 @@ pub(crate) type SourceRegistryState = Mutex<SourceRegistry>;
 pub(crate) struct SourceRegistry {
     backup_paths: HashMap<String, PathBuf>,
     export_paths: HashMap<String, PathBuf>,
+    next_backup_handle: u64,
     next_export_handle: u64,
 }
 
@@ -14,14 +15,16 @@ impl SourceRegistry {
         self.backup_paths.clear();
     }
 
-    pub(crate) fn register_backup(&mut self, index: usize, path: PathBuf) -> String {
-        let handle = format!("backup-source-{}", index + 1);
+    pub(crate) fn register_backup(&mut self, path: PathBuf) -> String {
+        self.next_backup_handle = self.next_backup_handle.saturating_add(1);
+        let handle = format!("backup-source-{}", self.next_backup_handle);
         self.backup_paths.insert(handle.clone(), path);
         handle
     }
 
     pub(crate) fn register_export(&mut self, path: PathBuf) -> String {
-        self.next_export_handle += 1;
+        self.export_paths.clear();
+        self.next_export_handle = self.next_export_handle.saturating_add(1);
         let handle = format!("export-source-{}", self.next_export_handle);
         self.export_paths.insert(handle.clone(), path);
         handle
@@ -62,4 +65,40 @@ pub(crate) fn registered_export_path(
             "The selected WhatsApp export is no longer available. Open it again and try again."
                 .to_owned()
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::SourceRegistry;
+
+    #[test]
+    fn refreshed_backups_receive_new_opaque_handles() {
+        let mut registry = SourceRegistry::default();
+        let first_handle = registry.register_backup(PathBuf::from("first-backup"));
+
+        registry.clear_backups();
+        let refreshed_handle = registry.register_backup(PathBuf::from("refreshed-backup"));
+
+        assert_ne!(first_handle, refreshed_handle);
+        assert_eq!(registry.backup_path(&first_handle), None);
+        assert_eq!(
+            registry.backup_path(&refreshed_handle),
+            Some(PathBuf::from("refreshed-backup"))
+        );
+    }
+
+    #[test]
+    fn registering_an_export_retires_the_previous_export_path() {
+        let mut registry = SourceRegistry::default();
+        let first_handle = registry.register_export(PathBuf::from("first-export.zip"));
+        let active_handle = registry.register_export(PathBuf::from("active-export.zip"));
+
+        assert_eq!(registry.export_path(&first_handle), None);
+        assert_eq!(
+            registry.export_path(&active_handle),
+            Some(PathBuf::from("active-export.zip"))
+        );
+    }
 }
