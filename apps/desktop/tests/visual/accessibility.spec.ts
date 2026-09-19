@@ -90,8 +90,12 @@ test("backup chat rows stay exposed as buttons", async ({ page }) => {
 test("core text colors meet the app contrast floor", async ({ page }) => {
   await page.goto("/?demo=backups");
 
-  const colorPairs = await page.evaluate(() =>
-    [".primary-action", ".backup-status.ready"].map((selector) => {
+  const sourceTargets = [".primary-action", ".backup-status.ready"];
+  for (const selector of sourceTargets) {
+    await expect(page.locator(selector)).toBeVisible();
+  }
+  const colorPairs = await page.evaluate((selectors) =>
+    selectors.map((selector) => {
       const element = document.querySelector(selector);
       if (!element) {
         throw new Error(`Missing contrast target ${selector}`);
@@ -103,7 +107,7 @@ test("core text colors meet the app contrast floor", async ({ page }) => {
         background: computed.backgroundColor,
         foreground: computed.color,
       };
-    }),
+    }), sourceTargets,
   );
 
   for (const pair of colorPairs) {
@@ -114,7 +118,11 @@ test("core text colors meet the app contrast floor", async ({ page }) => {
 
   await page.goto("/?demo=backup-chat");
 
-  const chatColorPairs = await page.evaluate(() => {
+  const chatTargets = [".message-sender", ".chat-row-media", ".banner-state"];
+  for (const selector of chatTargets) {
+    await expect(page.locator(selector).first()).toBeVisible();
+  }
+  const chatColorPairs = await page.evaluate((selectors) => {
     function visibleBackground(element: Element) {
       let current: Element | null = element;
 
@@ -129,7 +137,7 @@ test("core text colors meet the app contrast floor", async ({ page }) => {
       return window.getComputedStyle(document.body).backgroundColor;
     }
 
-    return [".message-sender", ".chat-row-media", ".banner-state"].map((selector) => {
+    return selectors.map((selector) => {
       const element = document.querySelector(selector);
       if (!element) {
         throw new Error(`Missing contrast target ${selector}`);
@@ -142,7 +150,7 @@ test("core text colors meet the app contrast floor", async ({ page }) => {
         foreground: computed.color,
       };
     });
-  });
+  }, chatTargets);
 
   for (const pair of chatColorPairs) {
     expect(contrastRatio(pair.foreground, pair.background), pair.selector).toBeGreaterThanOrEqual(

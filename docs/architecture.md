@@ -140,6 +140,10 @@ Desktop command support modules keep shared Tauri boundary rules centralized:
 - `apps/desktop/src-tauri/src/source_registry.rs` owns opaque source handles for local backup and export paths.
 - `apps/desktop/src-tauri/src/public_error.rs` owns redacted user-facing command errors.
 
+Source handles are unique for each registration cycle. Refreshing backup candidates retires the
+previous backup handles, and opening a new export retires the previous export path, so stale UI
+state cannot resolve to a different local source and registry memory stays bounded.
+
 Tauri path boundary rules:
 
 - Native open/save dialogs live in Rust commands, not JavaScript.
@@ -222,6 +226,18 @@ The UI should follow the supplied WhatsApp desktop references:
 - quiet utility controls
 
 The implementation should recreate the product skeleton, not ship screenshots as UI. Reusable design tokens and components should own the visual system so future screens do not drift.
+
+### Desktop presentation boundaries
+
+- `AppTitlebar` owns the shared app branding and reserves a separate grid row for native window controls. Window controls must never float over conversation actions.
+- `apps/desktop/app-icon.svg` is the canonical brand asset, used by the title bar and favicon. Run `npm run icons:generate` in `apps/desktop` after changing it to regenerate the desktop bundle icons with the installed Tauri CLI. Do not edit generated icons independently.
+- The source screen owns its vertical scroll area. Conversation container queries adapt its cards and toolbar to the actual pane width, including the minimum desktop window size.
+- Avatar layout is owned by `.avatar`; header typography selectors must target the text block rather than every descendant span.
+- Timeline date-range labels reuse `messageDateKey`, the same calendar-date interpretation used by filtering. Labels describe the loaded, filtered window and disappear when there are no results.
+- Backup chat selection uses the source chat ID, since different chats can have identical display names.
+- `ImagePreviewModal` uses a native modal dialog for focus containment, inert background controls, Escape dismissal, and focus restoration. Inline media preserves its aspect ratio.
+
+Visual regressions cover desktop and narrow layouts, clipped source content, branding geometry, window controls, filter wrapping, portrait media, and preview keyboard behavior. These browser checks complement packaged-app smoke tests; mocked desktop controls do not prove native window operations.
 
 ## Privacy Boundary
 

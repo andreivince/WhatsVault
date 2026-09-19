@@ -101,7 +101,7 @@ fn source_registry_returns_opaque_handles_for_private_paths() {
         Path::new("/Users/example/Library/Application Support/MobileSync/Backup/private-id");
     let export_path = Path::new("/Users/example/Downloads/WhatsApp Chat - Family.zip");
 
-    let backup_handle = registry.register_backup(0, backup_path.to_path_buf());
+    let backup_handle = registry.register_backup(backup_path.to_path_buf());
     let export_handle = registry.register_export(export_path.to_path_buf());
 
     assert_eq!(backup_handle, "backup-source-1");
@@ -119,7 +119,7 @@ fn source_registry_returns_opaque_handles_for_private_paths() {
 }
 
 #[test]
-fn selected_backup_candidates_reuse_opaque_backup_handles() {
+fn selected_backup_candidates_receive_opaque_backup_handles() {
     let root = tempdir().unwrap();
     let backup_path = root.path().join("selected-device-backup");
     fs::create_dir_all(&backup_path).unwrap();

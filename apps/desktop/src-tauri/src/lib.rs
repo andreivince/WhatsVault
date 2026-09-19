@@ -527,7 +527,7 @@ fn register_backup_candidate_dtos(
         .iter()
         .enumerate()
         .map(|(index, candidate)| {
-            let handle = registry.register_backup(index, PathBuf::from(&candidate.path));
+            let handle = registry.register_backup(PathBuf::from(&candidate.path));
             backup_candidate_dto(candidate, index, handle)
         })
         .collect())
