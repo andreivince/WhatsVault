@@ -1,5 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const videoViewport = { width: 1920, height: 1080 };
+
 export default defineConfig({
   testDir: "./tests/readme-demo",
   outputDir: "./target/readme-demo/test-results",
@@ -13,9 +15,9 @@ export default defineConfig({
     trace: "on",
     video: {
       mode: "on",
-      size: { width: 1440, height: 920 },
+      size: videoViewport,
     },
-    viewport: { width: 1440, height: 920 },
+    viewport: videoViewport,
   },
   webServer: {
     command: "npm run dev -- --host 127.0.0.1 --port 1420",
