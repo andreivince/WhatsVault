@@ -44,7 +44,8 @@ use dtos::{
 };
 use public_error::PublicError;
 use source_registry::{
-    registered_backup_path, registered_export_path, SourceRegistry, SourceRegistryState,
+    registered_backup_path, registered_export_path, BackupScanId, SourceRegistry,
+    SourceRegistryState,
 };
 
 const ATTACHMENT_PREVIEW_MAX_BYTES: u64 = 8 * 1024 * 1024;
@@ -102,11 +103,12 @@ where
 
 #[tauri::command]
 async fn list_iphone_backups(app: AppHandle) -> Result<Vec<IphoneBackupCandidateDto>, String> {
+    let scan_id = begin_backup_scan(&app.state::<SourceRegistryState>())?;
     run_blocking_command(move || {
         let candidates = discover_default_backup_candidates().map_err(|_| {
             "Could not scan the default iPhone backup folders on this computer.".to_owned()
         })?;
-        register_backup_candidate_dtos(&app.state::<SourceRegistryState>(), &candidates)
+        register_backup_candidate_dtos(&app.state::<SourceRegistryState>(), &candidates, scan_id)
     })
     .await
 }
@@ -115,13 +117,15 @@ async fn list_iphone_backups(app: AppHandle) -> Result<Vec<IphoneBackupCandidate
 async fn choose_iphone_backup_folder(
     app: AppHandle,
 ) -> Result<Option<Vec<IphoneBackupCandidateDto>>, String> {
+    let scan_id = begin_backup_scan(&app.state::<SourceRegistryState>())?;
     run_blocking_command(move || {
         let Some(source_path) = select_iphone_backup_folder_path(&app)? else {
             return Ok(None);
         };
         let candidates = discover_backup_candidates_from_selected_path(&source_path)
             .map_err(|_| "Could not read iPhone backups from the selected folder.".to_owned())?;
-        register_backup_candidate_dtos(&app.state::<SourceRegistryState>(), &candidates).map(Some)
+        register_backup_candidate_dtos(&app.state::<SourceRegistryState>(), &candidates, scan_id)
+            .map(Some)
     })
     .await
 }
@@ -575,9 +579,17 @@ pub fn run() {
         .expect("failed to run WhatsVault desktop app");
 }
 
+fn begin_backup_scan(registry: &SourceRegistryState) -> Result<BackupScanId, String> {
+    registry
+        .lock()
+        .map_err(|_| "Could not access local source handles.".to_owned())
+        .map(|mut registry| registry.begin_backup_scan())
+}
+
 fn register_backup_candidate_dtos(
     registry: &SourceRegistryState,
     candidates: &[BackupCandidate],
+    scan_id: BackupScanId,
 ) -> Result<Vec<IphoneBackupCandidateDto>, String> {
     let mut dtos: Vec<_> = candidates
         .iter()
@@ -587,7 +599,9 @@ fn register_backup_candidate_dtos(
     let mut registry = registry
         .lock()
         .map_err(|_| "Could not access local source handles.".to_owned())?;
-    registry.clear_backups();
+    if !registry.finish_backup_scan(scan_id) {
+        return Err("This backup scan was replaced by a newer request.".to_owned());
+    }
     for (candidate, dto) in candidates.iter().zip(&mut dtos) {
         dto.handle = registry.register_backup(PathBuf::from(&candidate.path));
     }

@@ -151,7 +151,12 @@ fn selected_backup_candidates_receive_opaque_backup_handles() {
     };
     let registry = std::sync::Mutex::new(SourceRegistry::default());
 
-    let dtos = register_backup_candidate_dtos(&registry, &[candidate]).unwrap();
+    let dtos = register_backup_candidate_dtos(
+        &registry,
+        &[candidate],
+        super::begin_backup_scan(&registry).unwrap(),
+    )
+    .unwrap();
 
     assert_eq!(dtos.len(), 1);
     assert_eq!(dtos[0].handle, "backup-source-1");
@@ -1052,4 +1057,26 @@ fn backup_export_counts_actual_bytes_across_attachments() {
     .unwrap();
     assert_eq!(result.embedded_attachment_count, 1);
     assert_eq!(result.skipped_attachment_count, 1);
+}
+
+#[test]
+fn a_stale_scan_cannot_retire_the_latest_registered_backup() {
+    let registry = std::sync::Mutex::new(SourceRegistry::default());
+    let old_scan = super::begin_backup_scan(&registry).unwrap();
+    let newest_scan = super::begin_backup_scan(&registry).unwrap();
+    let candidate = BackupCandidate {
+        id: "synthetic-backup".to_owned(),
+        path: "synthetic-backup".to_owned(),
+        manifest_db_path: "missing-manifest".to_owned(),
+        manifest_plist_path: None,
+        info_plist_path: None,
+        status_plist_path: None,
+    };
+    let current = register_backup_candidate_dtos(&registry, &[candidate], newest_scan).unwrap();
+    let stale = register_backup_candidate_dtos(&registry, &[], old_scan);
+    assert!(stale.is_err());
+    assert_eq!(
+        registry.lock().unwrap().backup_path(&current[0].handle),
+        Some("synthetic-backup".into())
+    );
 }

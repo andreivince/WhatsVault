@@ -143,6 +143,9 @@ Desktop command support modules keep shared Tauri boundary rules centralized:
 Source handles are unique for each registration cycle. Refreshing backup candidates retires the
 previous backup handles, and opening a new export retires the previous export path, so stale UI
 state cannot resolve to a different local source and registry memory stays bounded.
+Backup scans receive a generation before their background work starts. Only the latest generation
+may replace registered handles. React uses the shared latest-request gate for scan and selection
+responses, including errors and selection resets, so older results cannot replace newer choices.
 
 Tauri path boundary rules:
 

@@ -2,15 +2,32 @@ use std::{collections::HashMap, path::PathBuf, sync::Mutex};
 
 pub(crate) type SourceRegistryState = Mutex<SourceRegistry>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BackupScanId(u64);
+
 #[derive(Debug, Default)]
 pub(crate) struct SourceRegistry {
     backup_paths: HashMap<String, PathBuf>,
     export_paths: HashMap<String, PathBuf>,
+    next_backup_scan: u64,
     next_backup_handle: u64,
     next_export_handle: u64,
 }
 
 impl SourceRegistry {
+    pub(crate) fn begin_backup_scan(&mut self) -> BackupScanId {
+        self.next_backup_scan = self.next_backup_scan.saturating_add(1);
+        BackupScanId(self.next_backup_scan)
+    }
+
+    pub(crate) fn finish_backup_scan(&mut self, scan: BackupScanId) -> bool {
+        if scan != BackupScanId(self.next_backup_scan) {
+            return false;
+        }
+        self.clear_backups();
+        true
+    }
+
     pub(crate) fn clear_backups(&mut self) {
         self.backup_paths.clear();
     }
