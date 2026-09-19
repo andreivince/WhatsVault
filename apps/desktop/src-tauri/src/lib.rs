@@ -5,6 +5,7 @@ mod source_registry;
 use std::{
     fs,
     fs::File,
+    io::Read,
     path::{Path, PathBuf},
     sync::Mutex,
 };
@@ -32,7 +33,8 @@ use whatsvault_core::{
         list_chat_storage_chats_limited, search_chat_storage_chat_recent,
         search_chat_storage_chats_limited,
     },
-    AttachmentKind, BackupCandidate, BackupMetadata, ChatImport, ImportIssue, ImportIssueCode,
+    Attachment, AttachmentKind, BackupCandidate, BackupMetadata, ChatImport, ImportIssue,
+    ImportIssueCode,
 };
 
 use dtos::{
@@ -46,12 +48,47 @@ use source_registry::{
 };
 
 const ATTACHMENT_PREVIEW_MAX_BYTES: u64 = 8 * 1024 * 1024;
-const ATTACHMENT_EXPORT_MAX_BYTES: u64 = 24 * 1024 * 1024;
-const TOTAL_EXPORT_EMBEDDED_MEDIA_MAX_BYTES: u64 = 128 * 1024 * 1024;
 const BACKUP_CHAT_LIST_MAX_ROWS: usize = 1_000;
 const BACKUP_CHAT_SEARCH_MAX_ROWS: usize = 200;
 const BACKUP_CHAT_IMPORT_MAX_MESSAGES: usize = 2_000;
 const BACKUP_CHAT_SEARCH_MAX_RESULTS: usize = 500;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AttachmentEmbeddingLimits {
+    max_file_bytes: u64,
+    max_total_bytes: u64,
+}
+
+struct AttachmentEmbeddingBudget {
+    limits: AttachmentEmbeddingLimits,
+    remaining_bytes: u64,
+}
+
+impl AttachmentEmbeddingBudget {
+    fn new(limits: AttachmentEmbeddingLimits) -> Self {
+        Self {
+            limits,
+            remaining_bytes: limits.max_total_bytes,
+        }
+    }
+
+    fn next_file_limit(&self) -> u64 {
+        self.limits.max_file_bytes.min(self.remaining_bytes)
+    }
+
+    fn include(&mut self, size_bytes: u64) -> bool {
+        if size_bytes > self.next_file_limit() {
+            return false;
+        }
+        self.remaining_bytes -= size_bytes;
+        true
+    }
+}
+
+const HTML_EXPORT_MEDIA_LIMITS: AttachmentEmbeddingLimits = AttachmentEmbeddingLimits {
+    max_file_bytes: 24 * 1024 * 1024,
+    max_total_bytes: 128 * 1024 * 1024,
+};
 
 async fn run_blocking_command<T, F>(operation: F) -> Result<T, String>
 where
@@ -384,22 +421,8 @@ fn export_whatsapp_export_html_file(
     .map_err(|error| PublicError::SelectedSourceImportFailed.redact(error))?;
     let imported = import_result.imported;
     let mut embedded_attachments = Vec::new();
-    let mut embedded_media_bytes = 0_u64;
-    let mut requested_attachments = Vec::new();
-
-    for attachment in &imported.attachments {
-        if attachment.size_bytes > ATTACHMENT_EXPORT_MAX_BYTES {
-            continue;
-        }
-        if embedded_media_bytes.saturating_add(attachment.size_bytes)
-            > TOTAL_EXPORT_EMBEDDED_MEDIA_MAX_BYTES
-        {
-            continue;
-        }
-
-        embedded_media_bytes = embedded_media_bytes.saturating_add(attachment.size_bytes);
-        requested_attachments.push(attachment);
-    }
+    let requested_attachments =
+        select_attachments_within_budget(&imported.attachments, HTML_EXPORT_MEDIA_LIMITS);
 
     let payloads = read_whatsapp_export_attachments(
         File::open(source_path)
@@ -407,10 +430,11 @@ fn export_whatsapp_export_html_file(
         requested_attachments
             .iter()
             .map(|attachment| attachment.archive_path.as_str()),
-        ATTACHMENT_EXPORT_MAX_BYTES,
+        HTML_EXPORT_MEDIA_LIMITS.max_file_bytes,
     )
     .map_err(|error| PublicError::HtmlExportFailed.redact(error))?;
 
+    let mut budget = AttachmentEmbeddingBudget::new(HTML_EXPORT_MEDIA_LIMITS);
     for attachment in requested_attachments {
         let Some(payload) = payloads.get(&attachment.archive_path) else {
             continue;
@@ -419,6 +443,9 @@ fn export_whatsapp_export_html_file(
             continue;
         };
 
+        if !budget.include(payload.bytes.len() as u64) {
+            continue;
+        }
         embedded_attachments.push(EmbeddedAttachment {
             attachment_id: attachment.id.clone(),
             media_type: media_type.to_owned(),
@@ -449,7 +476,14 @@ async fn export_iphone_backup_chat_html(
         let Some(output_path) = select_html_export_path(&app, &default_filename)? else {
             return Ok(None);
         };
-        export_iphone_backup_chat_html_file(&backup_path, &chat_id, &output_path, &title).map(Some)
+        export_iphone_backup_chat_html_file(
+            &backup_path,
+            &chat_id,
+            &output_path,
+            &title,
+            HTML_EXPORT_MEDIA_LIMITS,
+        )
+        .map(Some)
     })
     .await
 }
@@ -459,6 +493,7 @@ fn export_iphone_backup_chat_html_file(
     chat_id: &str,
     output_path: &Path,
     title: &str,
+    limits: AttachmentEmbeddingLimits,
 ) -> Result<HtmlExportResultDto, String> {
     let chat_storage_path = resolved_chat_storage_path(backup_path)?;
     let total_message_count = count_chat_storage_chat_messages(&chat_storage_path, chat_id)
@@ -472,22 +507,7 @@ fn export_iphone_backup_chat_html_file(
     let skipped_message_count =
         count_skipped_messages(total_message_count, imported.messages.len());
     let mut embedded_attachments = Vec::new();
-    let mut embedded_media_bytes = 0_u64;
-    let mut requested_attachments = Vec::new();
-
-    for attachment in &imported.attachments {
-        if attachment.size_bytes > ATTACHMENT_EXPORT_MAX_BYTES {
-            continue;
-        }
-        if embedded_media_bytes.saturating_add(attachment.size_bytes)
-            > TOTAL_EXPORT_EMBEDDED_MEDIA_MAX_BYTES
-        {
-            continue;
-        }
-
-        embedded_media_bytes = embedded_media_bytes.saturating_add(attachment.size_bytes);
-        requested_attachments.push(attachment);
-    }
+    let requested_attachments = select_attachments_within_budget(&imported.attachments, limits);
 
     let manifest_db_path = backup_path.join("Manifest.db");
     let resolved_media_paths = resolve_whatsapp_media_file_paths(
@@ -499,6 +519,7 @@ fn export_iphone_backup_chat_html_file(
     )
     .map_err(|_| "Could not resolve media from the selected iPhone backup.".to_owned())?;
 
+    let mut budget = AttachmentEmbeddingBudget::new(limits);
     for attachment in requested_attachments {
         let archive_path_key = normalize_whatsapp_media_relative_path(&attachment.archive_path);
         let Some(media_path) = resolved_media_paths.get(&archive_path_key) else {
@@ -506,7 +527,7 @@ fn export_iphone_backup_chat_html_file(
         };
 
         let Some((bytes, _size_bytes)) =
-            read_attachment_file_bytes(media_path, ATTACHMENT_EXPORT_MAX_BYTES)?
+            read_attachment_file_bytes(media_path, budget.next_file_limit())?
         else {
             continue;
         };
@@ -514,6 +535,9 @@ fn export_iphone_backup_chat_html_file(
             continue;
         };
 
+        if !budget.include(bytes.len() as u64) {
+            continue;
+        }
         embedded_attachments.push(EmbeddedAttachment {
             attachment_id: attachment.id.clone(),
             media_type: media_type.to_owned(),
@@ -596,6 +620,17 @@ fn write_chat_html_export(
         exported_message_count: imported.messages.len(),
         skipped_message_count,
     })
+}
+
+fn select_attachments_within_budget(
+    attachments: &[Attachment],
+    limits: AttachmentEmbeddingLimits,
+) -> Vec<&Attachment> {
+    let mut budget = AttachmentEmbeddingBudget::new(limits);
+    attachments
+        .iter()
+        .filter(|attachment| budget.include(attachment.size_bytes))
+        .collect()
 }
 
 fn select_iphone_backup_folder_path(app: &AppHandle) -> Result<Option<PathBuf>, String> {
@@ -704,16 +739,24 @@ fn read_attachment_file_bytes(
     media_path: &Path,
     max_size_bytes: u64,
 ) -> Result<Option<(Vec<u8>, u64)>, String> {
-    let Ok(metadata) = fs::metadata(media_path) else {
+    let Ok(file) = File::open(media_path) else {
+        return Ok(None);
+    };
+    let Ok(metadata) = file.metadata() else {
         return Ok(None);
     };
     if !metadata.is_file() || metadata.len() > max_size_bytes {
         return Ok(None);
     }
 
-    let Ok(bytes) = fs::read(media_path) else {
+    let mut bytes = Vec::new();
+    if file
+        .take(max_size_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .is_err()
+    {
         return Ok(None);
-    };
+    }
     let size_bytes = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
     if size_bytes > max_size_bytes {
         return Ok(None);

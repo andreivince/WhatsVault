@@ -197,6 +197,7 @@ Rules:
 - Text, sender names, titles, timestamps, filenames, and data URLs are escaped before rendering.
 - Media type detection lives in `crates/whatsvault-core/src/media.rs`.
 - The desktop app controls local file selection plus per-file and total embedded-media size limits, but it does not generate HTML itself.
+- Export media limits and budget accounting are shared by ZIP and backup exports. Candidate selection uses reported sizes, and embedding checks actual payload bytes. Backup reads are capped by the remaining budget, including when database size metadata is missing.
 - Attachments that are missing, too large, or unsupported are listed in the HTML rather than making export fail.
 
 ## Proof CLI

@@ -14,7 +14,10 @@ use super::{
     BACKUP_CHAT_IMPORT_MAX_MESSAGES, BACKUP_CHAT_LIST_MAX_ROWS, BACKUP_CHAT_SEARCH_MAX_RESULTS,
     BACKUP_CHAT_SEARCH_MAX_ROWS, DEFAULT_WHATSAPP_EXPORT_IMPORT_MAX_MESSAGES,
 };
-use whatsvault_core::{BackupCandidate, BackupMetadata};
+use super::{
+    select_attachments_within_budget, AttachmentEmbeddingLimits, HTML_EXPORT_MEDIA_LIMITS,
+};
+use whatsvault_core::{Attachment, BackupCandidate, BackupMetadata};
 
 #[test]
 fn maps_previewable_export_media_to_browser_media_types() {
@@ -430,9 +433,14 @@ fn exports_iphone_backup_chat_to_self_contained_html_file() {
     let backup_path = create_synthetic_backup_with_media_chat(root.path());
     let output_path = root.path().join("backup-chat.html");
 
-    let result =
-        export_iphone_backup_chat_html_file(&backup_path, "1", &output_path, "Backup Chat")
-            .unwrap();
+    let result = export_iphone_backup_chat_html_file(
+        &backup_path,
+        "1",
+        &output_path,
+        "Backup Chat",
+        HTML_EXPORT_MEDIA_LIMITS,
+    )
+    .unwrap();
     let html = fs::read_to_string(&output_path).unwrap();
 
     assert_eq!(result.embedded_attachment_count, 1);
@@ -452,8 +460,14 @@ fn exports_iphone_backup_chat_html_with_bounded_recent_messages() {
     let backup_path = create_synthetic_backup_with_large_chat(root.path(), message_count);
     let output_path = root.path().join("large-backup-chat.html");
 
-    let result =
-        export_iphone_backup_chat_html_file(&backup_path, "1", &output_path, "Large Chat").unwrap();
+    let result = export_iphone_backup_chat_html_file(
+        &backup_path,
+        "1",
+        &output_path,
+        "Large Chat",
+        HTML_EXPORT_MEDIA_LIMITS,
+    )
+    .unwrap();
     let html = fs::read_to_string(&output_path).unwrap();
 
     assert_eq!(
@@ -947,4 +961,95 @@ fn blocking_command_adapter_redacts_worker_panics() {
         result.unwrap_err(),
         "Could not complete the local operation."
     );
+}
+
+#[test]
+fn export_attachment_budget_has_one_ordered_selection_rule() {
+    let attachments = [
+        synthetic_attachment("oversized", 6),
+        synthetic_attachment("first", 4),
+        synthetic_attachment("over-total", 2),
+        synthetic_attachment("boundary", 1),
+    ];
+
+    let selected = select_attachments_within_budget(
+        &attachments,
+        AttachmentEmbeddingLimits {
+            max_file_bytes: 5,
+            max_total_bytes: 5,
+        },
+    );
+
+    assert_eq!(
+        selected
+            .into_iter()
+            .map(|attachment| attachment.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["first", "boundary"]
+    );
+}
+
+fn synthetic_attachment(id: &str, size_bytes: u64) -> Attachment {
+    Attachment {
+        id: id.to_owned(),
+        archive_path: format!("Message/Media/{id}.jpg"),
+        filename: format!("{id}.jpg"),
+        kind: AttachmentKind::Photo,
+        size_bytes,
+    }
+}
+
+#[test]
+fn backup_export_uses_actual_bytes_when_metadata_omits_size() {
+    let root = tempdir().unwrap();
+    let backup_path = create_synthetic_backup_with_media_chat(root.path());
+    let chat_path = super::resolved_chat_storage_path(&backup_path).unwrap();
+    rusqlite::Connection::open(chat_path)
+        .unwrap()
+        .execute("UPDATE ZWAMEDIAITEM SET ZFILESIZE = 0", [])
+        .unwrap();
+    let output_path = root.path().join("bounded.html");
+    let result = export_iphone_backup_chat_html_file(
+        &backup_path,
+        "1",
+        &output_path,
+        "Bounded export",
+        AttachmentEmbeddingLimits {
+            max_file_bytes: 24,
+            max_total_bytes: 16,
+        },
+    )
+    .unwrap();
+    assert_eq!(result.embedded_attachment_count, 0);
+    assert_eq!(result.skipped_attachment_count, 1);
+    assert!(!fs::read_to_string(output_path)
+        .unwrap()
+        .contains("data:image/jpeg;base64,"));
+}
+
+#[test]
+fn backup_export_counts_actual_bytes_across_attachments() {
+    let root = tempdir().unwrap();
+    let backup_path = create_synthetic_backup_with_media_chat(root.path());
+    let chat_path = super::resolved_chat_storage_path(&backup_path).unwrap();
+    rusqlite::Connection::open(chat_path).unwrap().execute_batch(
+        "UPDATE ZWAMEDIAITEM SET ZFILESIZE = 0;
+         INSERT INTO ZWAMESSAGE (Z_PK, ZCHATSESSION, ZSORT, ZISFROMME, ZMESSAGEDATE, ZTEXT, ZMEDIAITEM)
+         VALUES (3, 1, 3, 1, 180, 'second photo', 11);
+         INSERT INTO ZWAMEDIAITEM (Z_PK, ZMESSAGE, ZMEDIALOCALPATH, ZTITLE, ZFILESIZE)
+         VALUES (11, 3, 'Message/Media/photo.jpg', 'photo.jpg', 0);"
+    ).unwrap();
+    let result = export_iphone_backup_chat_html_file(
+        &backup_path,
+        "1",
+        &root.path().join("bounded.html"),
+        "Bounded export",
+        AttachmentEmbeddingLimits {
+            max_file_bytes: 24,
+            max_total_bytes: 17,
+        },
+    )
+    .unwrap();
+    assert_eq!(result.embedded_attachment_count, 1);
+    assert_eq!(result.skipped_attachment_count, 1);
 }
