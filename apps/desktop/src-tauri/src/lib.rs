@@ -527,7 +527,7 @@ fn register_backup_candidate_dtos(
         .iter()
         .enumerate()
         .map(|(index, candidate)| {
-            let handle = registry.register_backup(index, PathBuf::from(&candidate.path));
+            let handle = registry.register_backup(PathBuf::from(&candidate.path));
             backup_candidate_dto(candidate, index, handle)
         })
         .collect())
@@ -879,7 +879,7 @@ mod tests {
             Path::new("/Users/example/Library/Application Support/MobileSync/Backup/private-id");
         let export_path = Path::new("/Users/example/Downloads/WhatsApp Chat - Family.zip");
 
-        let backup_handle = registry.register_backup(0, backup_path.to_path_buf());
+        let backup_handle = registry.register_backup(backup_path.to_path_buf());
         let export_handle = registry.register_export(export_path.to_path_buf());
 
         assert_eq!(backup_handle, "backup-source-1");
@@ -897,7 +897,7 @@ mod tests {
     }
 
     #[test]
-    fn selected_backup_candidates_reuse_opaque_backup_handles() {
+    fn selected_backup_candidates_receive_opaque_backup_handles() {
         let root = tempdir().unwrap();
         let backup_path = root.path().join("selected-device-backup");
         fs::create_dir_all(&backup_path).unwrap();
