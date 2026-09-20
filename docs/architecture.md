@@ -45,6 +45,17 @@ The export ZIP source is responsible for:
 7. Returning a bounded latest-message window for large transcripts instead of materializing every message for the UI.
 8. Returning the same shared app models used by the iPhone backup source.
 
+ZIP transcripts are selected by archive entry index so path normalization cannot break lookup.
+A single `_chat.txt` takes precedence over attached text documents; multiple canonical transcripts
+are rejected as ambiguous. Both numeric timestamp styles share header validation, and attachment
+markers preserve complete filenames, including spaces. Media detection reuses the shared media module.
+
+The default ZIP import retains at most 2,000 recent messages and 32 MiB of message text (bodies,
+senders, and timestamps). Reaching either window limit reports skipped messages. Streaming reads
+reject individual lines or messages above 1 MiB, and repeated import warnings are coalesced by type.
+The explicit core `all_messages` option bypasses the recent-window limits, but still enforces the
+per-message limit. These text limits are separate from ZIP directory metadata and attachment budgets.
+
 ## Shared Model Boundary
 
 All source-specific weirdness must stay behind importer modules. The UI should consume only shared models:
