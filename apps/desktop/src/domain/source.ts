@@ -13,6 +13,7 @@ export interface SourceProfile {
   emptyLabel: string;
   bannerLabel: string;
   viewingLabel: string;
+  loadedWindowDetail: string;
   supportsHtmlExport: boolean;
 }
 
@@ -22,7 +23,7 @@ const SOURCE_PROFILES: Record<SourceKind, SourceProfile> = {
     displayName: "iPhone backup",
     availabilityLabel: "Preview ready",
     availabilityDetail:
-      "Real backup chats render locally with bounded media preview and HTML export.",
+      "Browse conversations, preview media, and export chats from a local iPhone backup.",
     availabilityTone: "proof",
     pickerName: "iPhone backup",
     pickerExtensions: [],
@@ -31,6 +32,7 @@ const SOURCE_PROFILES: Record<SourceKind, SourceProfile> = {
     emptyLabel: "No backup loaded",
     bannerLabel: "Imported iPhone backup",
     viewingLabel: "Viewing local backup",
+    loadedWindowDetail: "Search can find older messages in this backup. Export uses the loaded recent messages.",
     supportsHtmlExport: true,
   },
   whatsapp_export_zip: {
@@ -47,6 +49,7 @@ const SOURCE_PROFILES: Record<SourceKind, SourceProfile> = {
     emptyLabel: "No local source loaded",
     bannerLabel: "Imported WhatsApp export",
     viewingLabel: "Viewing local export",
+    loadedWindowDetail: "Search and export use the loaded recent messages.",
     supportsHtmlExport: true,
   },
 };

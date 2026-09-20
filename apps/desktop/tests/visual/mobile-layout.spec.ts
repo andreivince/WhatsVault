@@ -47,7 +47,7 @@ test("mobile backup picker filters chat rows from the shared search box", async 
   await page.goto("/?demo=backups");
 
   const sidebar = page.locator(".chat-sidebar");
-  await page.getByTestId(TEST_IDS.searchInput).fill("project ready");
+  await page.getByTestId(TEST_IDS.searchInput).fill("trip itinerary");
 
   await expect(sidebar.getByText("Project Archive")).toBeVisible();
   await expect(sidebar.getByText("Design Preview")).toBeHidden();

@@ -60,7 +60,7 @@ export function EmptyConversation({
       <p>Local WhatsApp viewer</p>
       <SourceOverview isOpeningSource={isOpeningSource} onOpenSource={onOpenSource} />
       {errorMessage ? <p className="error-text" role="alert">{errorMessage}</p> : null}
-      {isBrowserPreview ? <p className="muted-note">Desktop runtime required for file access.</p> : null}
+      {isBrowserPreview ? <p className="muted-note">Open the desktop app to browse files on this computer.</p> : null}
       <div className="encryption-note">
         <span>
           Private files stay local to this device.

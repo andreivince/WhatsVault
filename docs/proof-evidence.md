@@ -4,9 +4,9 @@ This page records public-safe evidence for WhatsVault proof claims. It intention
 
 Public proof evidence does not include private backup content, private identifiers, local paths, screenshots from private chats, or generated exports from real conversations.
 
-## Current Proof Summary
+## Earlier Local Validation
 
-The current local proof state is:
+Earlier local validation recorded the following results. They are historical observations, not a guarantee that every backup format works on the current revision.
 
 | Area | Public-safe status | Evidence boundary |
 | --- | --- | --- |
@@ -19,6 +19,18 @@ The current local proof state is:
 | Packaged app smoke | Passed locally | The generated macOS app bundle opened to a nonblank source screen outside the dev server. |
 
 These proof notes are deliberately weaker than public fixtures because they cannot expose the user's real backup. Synthetic fixtures and automated tests cover the public, repeatable shape of the same behavior.
+
+## September 19, 2026 Quality Review
+
+The current review used synthetic data. No real local iPhone backup was available to repeat the earlier private validation.
+
+- The Rust workspace passed 106 tests; the optional private-fixture test remained ignored.
+- Frontend unit and script checks passed 90 tests. All 48 browser checks passed in Chromium and WebKit, including source transitions, stale requests, media changes, mixed-height timelines, narrow layouts, keyboard focus, and automated WCAG A/AA checks on four screens.
+- The packaged macOS app imported a synthetic ZIP with 100,001 messages, displayed the latest 2,000 messages, opened an image preview, and exported that loaded window. The generated HTML contained exactly 2,000 messages and one embedded image.
+- A separate synthetic iPhone backup with 301 chats and 100,300 messages opened in the packaged app. The largest chat loaded a 2,000-message window, and full-backup search found its oldest message outside that window.
+- The README screenshot and video were regenerated from fictional data. Their hashes are recorded in the demo asset manifest.
+
+Automated accessibility checks do not replace manual assistive-technology testing. Windows package builds do not establish successful installation or runtime behavior on a Windows machine.
 
 ## Repeatable Public Evidence
 

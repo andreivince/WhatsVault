@@ -8,7 +8,7 @@ WhatsVault is a local desktop viewer for WhatsApp chats and media from unencrypt
 
 ## Demo
 
-https://github.com/user-attachments/assets/2e0507a4-698d-4439-ae8d-60bde8cbd67d
+https://github.com/user-attachments/assets/cb6946e4-1ff8-4404-bc0b-6c453eaea74e
 
 [View screenshot](docs/assets/whatsvault-synthetic-demo.png) · [Download video](docs/assets/whatsvault-readme-demo.mp4) · Fictional conversations and generated media.
 

@@ -7,7 +7,7 @@ test("large synthetic chats keep DOM rendering bounded while expanding older mes
 
   await expect(page.getByTestId(TEST_IDS.chatTitle)).toHaveText("Large Archive");
   await expect(page.getByText("900 recent messages loaded")).toBeVisible();
-  await expect(page.getByText("Search and export use the loaded recent messages.")).toBeVisible();
+  await expect(page.getByText("Search can find older messages in this backup. Export uses the loaded recent messages.")).toBeVisible();
   await expect(page.getByTestId(TEST_IDS.virtualMessageList)).toHaveAttribute("data-total-messages", "420");
   await expect.poll(async () => page.getByTestId(TEST_IDS.messageBubble).count()).toBeLessThanOrEqual(120);
   await expect(page.getByText("Large archive synthetic message 900.")).toBeVisible();
