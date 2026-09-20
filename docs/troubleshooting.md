@@ -10,6 +10,11 @@ Check:
 2. The archive contains one transcript such as `_chat.txt`.
 3. The file is stored locally and is readable by the current user.
 
+An archive containing multiple `_chat.txt` conversations is ambiguous; open one chat export at a
+time. Individual transcript lines or messages larger than 1 MiB are not supported. Large ordinary
+histories load their latest 2,000 messages within a 32 MiB text budget and show a notice when older
+messages are omitted.
+
 Useful safe evidence:
 
 - app version

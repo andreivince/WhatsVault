@@ -90,7 +90,7 @@ fn reports_continuation_without_message_as_structured_issue() {
 
 #[test]
 fn imports_large_export_zip_as_bounded_recent_window() {
-    let message_count = DEFAULT_WHATSAPP_EXPORT_IMPORT_MAX_MESSAGES + 3;
+    let message_count = 100_000;
     let mut transcript = String::new();
     for index in 1..=message_count {
         transcript.push_str(&format!(
@@ -106,7 +106,13 @@ fn imports_large_export_zip_as_bounded_recent_window() {
         imported.messages.len(),
         DEFAULT_WHATSAPP_EXPORT_IMPORT_MAX_MESSAGES
     );
-    assert_eq!(imported.messages[0].body, "message 4");
+    assert_eq!(
+        imported.messages[0].body,
+        format!(
+            "message {}",
+            message_count - DEFAULT_WHATSAPP_EXPORT_IMPORT_MAX_MESSAGES + 1
+        )
+    );
     assert_eq!(
         imported.messages.last().unwrap().body,
         format!("message {message_count}")
@@ -245,4 +251,171 @@ fn imports_private_export_zip_without_printing_chat_content() {
     assert!(!imported.messages.is_empty());
     assert!(imported.messages.len() <= DEFAULT_WHATSAPP_EXPORT_IMPORT_MAX_MESSAGES);
     assert!(imported.transcript_name.is_some());
+}
+
+#[test]
+fn imports_transcript_with_backslash_path() {
+    let archive = synthetic_zip(&[("Chat\\_chat.txt", b"[01/02/2026, 09:15:00] Ana: hello\n")]);
+    let imported = import_whatsapp_export_zip(archive).unwrap();
+    assert_eq!(imported.transcript_name.as_deref(), Some("Chat/_chat.txt"));
+    assert_eq!(imported.messages[0].body, "hello");
+}
+
+#[test]
+fn resolves_pdf_references_with_spaces_and_unknown_explicit_attachments() {
+    let archive = synthetic_zip(&[
+        ("_chat.txt", b"[01/02/2026, 09:15:00] Ana: <attached: travel plans.pdf>\n[01/02/2026, 09:16:00] Ana: <attached: notes.csv>\n[01/02/2026, 09:17:00] Ana: ticket.pdf (file attached)\n"),
+        ("travel plans.pdf", b"synthetic pdf"),
+        ("notes.csv", b"synthetic document"),
+        ("ticket.pdf", b"synthetic pdf"),
+    ]);
+    let imported = import_whatsapp_export_zip(archive).unwrap();
+    assert_eq!(imported.attachments.len(), 3);
+    for message in &imported.messages {
+        assert_eq!(message.attachment_ids.len(), 1);
+    }
+    assert!(imported.issues.is_empty());
+}
+
+#[test]
+fn keeps_bracketed_continuation_text_in_the_original_message() {
+    let archive = synthetic_zip(&[("_chat.txt", b"[01/02/2026, 09:15:00] Ana: shopping list\n[groceries] milk and eggs\n[01/02/2026, 09:16:00] You: thanks\n")]);
+    let imported = import_whatsapp_export_zip(archive).unwrap();
+    assert_eq!(imported.messages.len(), 2);
+    assert_eq!(
+        imported.messages[0].body,
+        "shopping list\n[groceries] milk and eggs"
+    );
+}
+
+#[test]
+fn rejects_multiple_canonical_transcripts_instead_of_silently_choosing_one() {
+    let archive = synthetic_zip(&[
+        ("First/_chat.txt", b"[01/02/2026, 09:15:00] Ana: first\n"),
+        ("Second/_chat.txt", b"[01/02/2026, 09:15:00] Ana: second\n"),
+    ]);
+    assert!(matches!(
+        import_whatsapp_export_zip(archive),
+        Err(whatsvault_core::sources::whatsapp_export_zip::ExportZipError::MultipleTranscripts(_))
+    ));
+}
+
+#[test]
+fn prefers_one_canonical_transcript_over_an_attached_text_document() {
+    let archive = synthetic_zip(&[
+        (
+            "_chat.txt",
+            b"[01/02/2026, 09:15:00] Ana: <attached: notes.txt>\n",
+        ),
+        ("notes.txt", b"synthetic text document"),
+    ]);
+    let imported = import_whatsapp_export_zip(archive).unwrap();
+    assert_eq!(imported.transcript_name.as_deref(), Some("_chat.txt"));
+    assert_eq!(imported.attachments.len(), 1);
+}
+
+#[test]
+fn preserves_numeric_timestamp_formats_and_rejects_bracketed_prose() {
+    for timestamp in [
+        "01/02/2026, 09:15:00",
+        "1/2/26, 9:15 AM",
+        "01.02.2026, 09:15",
+        "2026-02-01, 09:15:00",
+        "01/02/2026 09:15:00",
+    ] {
+        let transcript =
+            format!("[{timestamp}] Ana: first\n[invoice/42, total] is ordinary text\n");
+        let imported =
+            import_whatsapp_export_zip(synthetic_zip(&[("_chat.txt", transcript.as_bytes())]))
+                .unwrap();
+        assert_eq!(imported.messages.len(), 1, "timestamp format: {timestamp}");
+        assert_eq!(
+            imported.messages[0].body,
+            "first\n[invoice/42, total] is ordinary text"
+        );
+        assert_eq!(imported.messages[0].timestamp.raw, timestamp);
+    }
+}
+
+#[test]
+fn rejects_oversized_lines_and_multiline_messages_before_returning_them() {
+    let line = "x".repeat(1024 * 1024 + 1);
+    let transcript = format!("[01/02/2026, 09:15:00] Ana: {line}\n");
+    assert!(
+        import_whatsapp_export_zip(synthetic_zip(&[("_chat.txt", transcript.as_bytes())])).is_err()
+    );
+
+    let continuation = "x".repeat(128 * 1024) + "\n";
+    let transcript = format!(
+        "[01/02/2026, 09:15:00] Ana: start\n{}",
+        continuation.repeat(9)
+    );
+    assert!(
+        import_whatsapp_export_zip(synthetic_zip(&[("_chat.txt", transcript.as_bytes())])).is_err()
+    );
+}
+
+#[test]
+fn bounds_recent_message_text_bytes_as_well_as_message_count() {
+    let mut transcript = String::new();
+    let body = "x".repeat(128 * 1024);
+    for index in 0..300 {
+        transcript.push_str(&format!(
+            "[01/02/2026, 09:15:00] Ana: message {index} {body}\n"
+        ));
+    }
+    let imported =
+        import_whatsapp_export_zip(synthetic_zip(&[("_chat.txt", transcript.as_bytes())])).unwrap();
+    assert!(
+        imported
+            .messages
+            .iter()
+            .map(|message| message.body.len())
+            .sum::<usize>()
+            <= 32 * 1024 * 1024
+    );
+    assert!(imported
+        .messages
+        .last()
+        .unwrap()
+        .body
+        .starts_with("message 299 "));
+    assert!(imported
+        .issues
+        .iter()
+        .any(|issue| issue.code == ImportIssueCode::MessageWindowTruncated));
+}
+
+#[test]
+fn reports_repeated_orphan_lines_once() {
+    let transcript = "orphan continuation\n".repeat(10_000);
+    let imported =
+        import_whatsapp_export_zip(synthetic_zip(&[("_chat.txt", transcript.as_bytes())])).unwrap();
+    assert_eq!(imported.issues.len(), 1);
+}
+
+#[test]
+fn bounds_repeated_missing_attachment_diagnostics() {
+    let transcript = format!(
+        "[01/02/2026, 09:15:00] Ana: {}\n",
+        "<attached: absent.jpg> ".repeat(10_000)
+    );
+    let imported =
+        import_whatsapp_export_zip(synthetic_zip(&[("_chat.txt", transcript.as_bytes())])).unwrap();
+    assert_eq!(
+        imported
+            .issues
+            .iter()
+            .filter(|issue| issue.code == ImportIssueCode::MissingAttachmentReference)
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn applies_message_limit_after_invalid_utf8_replacement() {
+    let mut transcript = b"[01/02/2026, 09:15:00] Ana: ".to_vec();
+    transcript.extend(std::iter::repeat_n(0xff, 400_000));
+    let result = import_whatsapp_export_zip(synthetic_zip(&[("_chat.txt", &transcript)]));
+    assert!(result.is_err());
 }
