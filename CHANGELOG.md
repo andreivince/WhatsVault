@@ -6,6 +6,10 @@ WhatsVault is pre-alpha. Until the first stable release, entries should stay hon
 
 ## Unreleased
 
+- Corrected branding, responsive layouts, keyboard focus, and text contrast; refreshed the README with a playable demo and current screenshot.
+- Kept chat selection, loading errors, and export status consistent during overlapping requests; added a way to return to source selection from an open conversation.
+- Bounded media preview cache memory, reset previews when changing chats, and measured variable-height message rows to keep large timelines stable.
+- Improved ZIP transcript selection, attachment filenames, and message-header parsing; bounded imported text and repeated warnings for large or malformed archives.
 - Public GitHub repository foundation with README, roadmap, architecture docs, contribution guide, security policy, issue templates, pull request template, and release documentation.
 - Tauri v2 desktop app with React and TypeScript plus a Rust core crate for source-neutral import, media preview, search, and HTML export behavior.
 - WhatsApp export ZIP viewer using bounded latest-message import, on-demand bounded media preview, and self-contained HTML export.
