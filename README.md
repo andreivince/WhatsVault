@@ -6,11 +6,11 @@ WhatsVault is a local desktop viewer for WhatsApp chats and media from unencrypt
 
 **Pre-alpha:** macOS and Windows builds are available for early testing. macOS builds are not Developer ID signed or notarized; Windows builds are not code signed. See [known limitations](#known-limitations) before getting started.
 
-## Preview
+## Demo
 
-[![WhatsVault showing a chat with an image and voice message, alongside search, date filtering, and HTML export controls](docs/assets/whatsvault-synthetic-demo.png)](docs/assets/whatsvault-readme-demo.mp4)
+https://github.com/user-attachments/assets/2e0507a4-698d-4439-ae8d-60bde8cbd67d
 
-**[Watch the demo video (MP4)](docs/assets/whatsvault-readme-demo.mp4)** · The screenshot and video use fictional conversations and generated media.
+[View screenshot](docs/assets/whatsvault-synthetic-demo.png) · [Download video](docs/assets/whatsvault-readme-demo.mp4) · Fictional conversations and generated media.
 
 ## Get started
 
