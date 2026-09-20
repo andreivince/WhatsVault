@@ -39,6 +39,71 @@ function deferred<T>() {
 }
 
 describe("attachmentPreviewLoader", () => {
+  it("evicts by actual preview string bytes rather than declared file size", async () => {
+    const reads: string[] = [];
+    const value = { ...preview("x".repeat(100)), sizeBytes: 1 };
+    const loader = createAttachmentPreviewLoader({
+      maxCacheBytes: value.dataUrl.length * 2,
+      readPreview: async (_source, item) => { reads.push(item.id); return value; },
+    });
+    await loader.load(source, attachment("first"));
+    const second = loader.load(source, attachment("second"));
+    await second;
+    expect(loader.load(source, attachment("second"))).toBe(second);
+    await loader.load(source, attachment("first"));
+    expect(reads).toEqual(["first", "second", "first"]);
+  });
+
+  it("returns oversized previews without retaining them or evicting useful entries", async () => {
+    const reads: string[] = [];
+    const loader = createAttachmentPreviewLoader({
+      maxCacheBytes: preview("small").dataUrl.length * 2,
+      readPreview: async (_source, item) => {
+        reads.push(item.id);
+        return preview(item.id === "large" ? "x".repeat(100) : "small");
+      },
+    });
+    const small = loader.load(source, attachment("small"));
+    await small;
+    await expect(loader.load(source, attachment("large"))).resolves.toEqual(preview("x".repeat(100)));
+    expect(loader.load(source, attachment("small"))).toBe(small);
+    await loader.load(source, attachment("large"));
+    expect(reads).toEqual(["small", "large", "large"]);
+  });
+
+  it("evicts the least recently used preview when the entry limit is reached", async () => {
+    const reads: string[] = [];
+    const loader = createAttachmentPreviewLoader({
+      maxCacheEntries: 2,
+      readPreview: async (_source, item) => { reads.push(item.id); return preview(item.id); },
+    });
+    const first = loader.load(source, attachment("first"));
+    await first;
+    await loader.load(source, attachment("second"));
+    expect(loader.load(source, attachment("first"))).toBe(first);
+    await loader.load(source, attachment("third"));
+    expect(loader.load(source, attachment("first"))).toBe(first);
+    await loader.load(source, attachment("second"));
+    expect(reads).toEqual(["first", "second", "third", "second"]);
+  });
+
+  it("does not charge an old completion against a cleared replacement cache", async () => {
+    const old = deferred<AttachmentPreview>();
+    let reads = 0;
+    const loader = createAttachmentPreviewLoader({
+      maxCacheBytes: preview("new").dataUrl.length * 2,
+      readPreview: async () => ++reads === 1 ? old.promise : preview("new"),
+    });
+    const first = loader.load(source, attachment("first"));
+    loader.clear();
+    const replacement = loader.load(source, attachment("first"));
+    await replacement;
+    old.resolve(preview("x".repeat(100)));
+    await first;
+    expect(loader.load(source, attachment("first"))).toBe(replacement);
+    expect(reads).toBe(2);
+  });
+
   it("deduplicates concurrent requests for the same source attachment", async () => {
     let readCount = 0;
     const loader = createAttachmentPreviewLoader({
