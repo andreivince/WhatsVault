@@ -4,7 +4,7 @@ WhatsVault is pre-alpha. This matrix is intentionally conservative and should no
 
 | Source | macOS | Windows | Chat text | Media preview | HTML export | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| WhatsApp export ZIP | Supported in desktop app with bounded latest-message import | Expected through Tauri, pending Windows CI proof | Supported for the loaded latest-message window | Images, stickers, audio, video, and documents when bounded and browser-readable | Supported for the loaded latest-message window | First usable source path |
+| WhatsApp export ZIP | Supported in desktop app with bounded latest-message import | Builds in CI; live Windows validation pending | Supported for the loaded latest-message window | Images, stickers, audio, video, and documents when bounded and browser-readable | Supported for the loaded latest-message window | First usable source path |
 | Unencrypted iPhone backup | Backup discovery/status, chat-list/import UI path, folder-access fallback, bounded media preview, and bounded selected-chat HTML export covered with synthetic tests and real local smoke | Default Apple Devices/iTunes root construction tested; live Windows proof pending | Real backup chat rendering verified locally without committing private artifacts | Real backup media preview smoke passed locally with bounded browser-readable previews | Real backup bounded HTML export smoke passed locally | Primary roadmap target, macOS pre-alpha |
 | Encrypted iPhone backup | Not supported | Not supported | Not supported | Not supported | Not supported | Future research |
 | Android WhatsApp backup | Not supported | Not supported | Not supported | Not supported | Not supported | Out of scope for the current roadmap |
