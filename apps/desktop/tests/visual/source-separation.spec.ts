@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import { TEST_IDS } from "../../src/testing/testIds";
 
-test("source screen separates supported ZIP viewing from iPhone backup proof work", async ({ page }) => {
+test("source screen explains ZIP and iPhone backup viewing", async ({ page }) => {
   await page.goto("/");
 
   await expect(page.getByTestId(TEST_IDS.appShell)).toBeVisible();
@@ -17,7 +17,7 @@ test("source screen separates supported ZIP viewing from iPhone backup proof wor
   const backupSource = page.getByTestId(TEST_IDS.proofSourceCard);
   await expect(backupSource).toContainText("iPhone backup");
   await expect(backupSource).toContainText("Preview ready");
-  await expect(backupSource).toContainText("Real backup chats render locally");
+  await expect(backupSource).toContainText("Browse conversations, preview media, and export chats");
   await expect(backupSource.getByRole("button")).toHaveCount(0);
   await expect(page.locator(".source-card-icon")).toHaveCount(0);
   await expect(page.locator(".empty-mark")).toHaveCount(0);

@@ -69,7 +69,7 @@ export function createDemoImport(): ChatImport {
         id: "demo-006",
         timestamp: { raw: "06/23/2026, 7:36 AM" },
         sender: "You",
-        body: "Search and export are the next useful pieces.",
+        body: "Search makes it easy to find a message again.",
         attachment_ids: [],
       },
       {
@@ -166,7 +166,7 @@ export function createDemoBackupChats(): Chat[] {
     {
       id: "demo-backup-chat-2",
       title: "Project Archive",
-      latestMessage: "The backup import path is ready for review.",
+      latestMessage: "I saved the trip itinerary here.",
       latestMessageTimestamp: { raw: "06/22/2026, 4:10 PM" },
       messageCount: 128,
       attachmentCount: 16,

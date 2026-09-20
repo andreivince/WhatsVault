@@ -22,7 +22,7 @@ const SOURCE_PROFILES: Record<SourceKind, SourceProfile> = {
     displayName: "iPhone backup",
     availabilityLabel: "Preview ready",
     availabilityDetail:
-      "Real backup chats render locally with bounded media preview and HTML export.",
+      "Browse conversations, preview media, and export chats from a local iPhone backup.",
     availabilityTone: "proof",
     pickerName: "iPhone backup",
     pickerExtensions: [],

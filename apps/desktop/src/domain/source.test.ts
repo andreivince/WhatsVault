@@ -76,7 +76,7 @@ describe("source domain helpers", () => {
       pickerName: "iPhone backup",
       availabilityLabel: "Preview ready",
       availabilityDetail:
-        "Real backup chats render locally with bounded media preview and HTML export.",
+        "Browse conversations, preview media, and export chats from a local iPhone backup.",
       supportsHtmlExport: true,
     });
   });

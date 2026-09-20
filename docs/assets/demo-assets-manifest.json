@@ -3,12 +3,12 @@
   "assets": [
     {
       "path": "docs/assets/whatsvault-readme-demo.mp4",
-      "sha256": "081601d205fe12e8b9c49c177b324005fa85c915eab48465e6f4062e33bc6ada",
+      "sha256": "bb9c264203ad8b47b02e723a9958195549493ce602840cbc54c6f1526954d7af",
       "source": "synthetic Playwright demo"
     },
     {
       "path": "docs/assets/whatsvault-synthetic-demo.png",
-      "sha256": "2c13d55adc43217af66e32846e60b9dd15258683296d6901dc55c8121dd1acb1",
+      "sha256": "96b8ef16f554833876a3d1d3b76d2bd53b232fd01953594868066d8f41cd4244",
       "source": "synthetic Playwright demo"
     }
   ]
