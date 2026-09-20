@@ -1,45 +1,30 @@
-import { Download, File, X } from "lucide-react";
+import { Download, X } from "lucide-react";
 import {
   type ChangeEvent,
   type FormEvent,
-  memo,
-  type RefObject,
-  useCallback,
-  useEffect,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
 
 import {
-  attachmentLabel,
-  displayTimestamp,
-  isOutgoingMessage,
   messageCountLabel,
   messageDateRangeLabel,
   messageFilterResultLabel,
   messageWindowNotice,
 } from "../domain/chat";
-import { attachmentRenderKind, canRequestAttachmentPreview } from "../domain/media";
 import { DEFAULT_SOURCE_KIND, sourceProfile } from "../domain/source";
-import {
-  createTrailingVirtualTimelineWindow,
-  createVirtualTimelineWindow,
-} from "../domain/virtualTimeline";
 import type {
   Attachment,
-  AttachmentPreview,
   ChatImport,
   LoadedChatSource,
   Message,
 } from "../models";
-import { attachmentPreviewLoader } from "../services/attachmentPreview";
-import { isDesktopRuntime } from "../services/desktop";
 import { TEST_IDS } from "../testing/testIds";
 import type { ConversationBackupSearchStatus, ExportState } from "../viewState";
 import { Avatar } from "./Avatar";
 import { ImagePreviewModal } from "./ImagePreviewModal";
+import { MessageTimeline } from "./MessageTimeline";
 
 export function ConversationView({
   imported,
@@ -112,15 +97,6 @@ export function ConversationView({
       : importWindowNotice
         ? "Recent messages loaded"
         : "Ready";
-
-  useEffect(() => {
-    const canvas = messageCanvasRef.current;
-    if (!canvas) {
-      return;
-    }
-
-    canvas.scrollTop = canvas.scrollHeight;
-  }, [timelineIdentity]);
 
   useLayoutEffect(() => {
     if (!window.matchMedia("(max-width: 760px)").matches) {
@@ -216,7 +192,8 @@ export function ConversationView({
           </button>
         ) : null}
         {visibleMessages.length > 0 ? (
-          <VirtualizedMessageTimeline
+          <MessageTimeline
+            timelineIdentity={timelineIdentity}
             messages={visibleMessages}
             source={source}
             attachmentMap={attachmentMap}
@@ -232,259 +209,6 @@ export function ConversationView({
       {imagePreview ? (
         <ImagePreviewModal preview={imagePreview} onClose={() => setImagePreview(null)} />
       ) : null}
-    </div>
-  );
-}
-
-function VirtualizedMessageTimeline({
-  messages,
-  source,
-  attachmentMap,
-  scrollParentRef,
-  onOpenImagePreview,
-}: {
-  messages: Message[];
-  source: LoadedChatSource | null;
-  attachmentMap: Map<string, Attachment>;
-  scrollParentRef: RefObject<HTMLDivElement | null>;
-  onOpenImagePreview: (preview: { dataUrl: string; alt: string; caption: string }) => void;
-}) {
-  const listRef = useRef<HTMLDivElement>(null);
-  const [virtualWindow, setVirtualWindow] = useState(() =>
-    createTrailingVirtualTimelineWindow(messages.length),
-  );
-
-  const updateVirtualWindow = useCallback(() => {
-    const scrollParent = scrollParentRef.current;
-    const list = listRef.current;
-    if (!scrollParent || !list) {
-      setVirtualWindow(createTrailingVirtualTimelineWindow(messages.length));
-      return;
-    }
-
-    setVirtualWindow(createVirtualTimelineWindow({
-      itemCount: messages.length,
-      scrollTop: scrollParent.scrollTop,
-      viewportHeight: scrollParent.clientHeight,
-      listTop: list.offsetTop,
-    }));
-  }, [messages.length, scrollParentRef]);
-
-  useLayoutEffect(() => {
-    updateVirtualWindow();
-  }, [updateVirtualWindow]);
-
-  useEffect(() => {
-    const scrollParent = scrollParentRef.current;
-    if (!scrollParent) {
-      return;
-    }
-
-    let animationFrame = 0;
-    const scheduleUpdate = () => {
-      cancelAnimationFrame(animationFrame);
-      animationFrame = requestAnimationFrame(updateVirtualWindow);
-    };
-
-    scrollParent.addEventListener("scroll", scheduleUpdate, { passive: true });
-    window.addEventListener("resize", scheduleUpdate);
-    scheduleUpdate();
-
-    return () => {
-      cancelAnimationFrame(animationFrame);
-      scrollParent.removeEventListener("scroll", scheduleUpdate);
-      window.removeEventListener("resize", scheduleUpdate);
-    };
-  }, [scrollParentRef, updateVirtualWindow]);
-
-  const renderedMessages = useMemo(
-    () => messages.slice(virtualWindow.startIndex, virtualWindow.endIndex),
-    [messages, virtualWindow.endIndex, virtualWindow.startIndex],
-  );
-
-  return (
-    <div
-      className="virtual-message-list"
-      ref={listRef}
-      data-testid={TEST_IDS.virtualMessageList}
-      data-total-messages={messages.length}
-      data-rendered-messages={virtualWindow.renderedCount}
-    >
-      <div
-        className="virtual-message-spacer"
-        style={{ height: virtualWindow.beforeHeight }}
-        aria-hidden="true"
-      />
-      {renderedMessages.map((message) => (
-        <MessageBubble
-          key={message.id}
-          message={message}
-          source={source}
-          onOpenImagePreview={onOpenImagePreview}
-          attachmentMap={attachmentMap}
-        />
-      ))}
-      <div
-        className="virtual-message-spacer"
-        style={{ height: virtualWindow.afterHeight }}
-        aria-hidden="true"
-      />
-    </div>
-  );
-}
-
-const MessageBubble = memo(function MessageBubble({
-  message,
-  source,
-  attachmentMap,
-  onOpenImagePreview,
-}: {
-  message: Message;
-  source: LoadedChatSource | null;
-  attachmentMap: Map<string, Attachment>;
-  onOpenImagePreview: (preview: { dataUrl: string; alt: string; caption: string }) => void;
-}) {
-  const outgoing = isOutgoingMessage(message);
-  const attachments = message.attachment_ids
-    .map((id) => attachmentMap.get(id))
-    .filter((attachment): attachment is Attachment => Boolean(attachment));
-
-  return (
-    <article
-      className={`message-row${outgoing ? " outgoing" : " incoming"}`}
-      data-testid={TEST_IDS.messageBubble}
-    >
-      <div className="message-bubble">
-        {!outgoing && message.sender ? <span className="message-sender">{message.sender}</span> : null}
-        {attachments.length > 0 ? (
-          <div className="attachment-stack">
-            {attachments.map((attachment) => (
-              <AttachmentBlock
-                key={attachment.id}
-                attachment={attachment}
-                source={source}
-                onOpenImagePreview={onOpenImagePreview}
-              />
-            ))}
-          </div>
-        ) : null}
-        {message.body ? <p>{message.body}</p> : null}
-        <span className="message-time">
-          {displayTimestamp(message.timestamp.raw)}
-        </span>
-      </div>
-    </article>
-  );
-});
-
-function AttachmentBlock({
-  attachment,
-  source,
-  onOpenImagePreview,
-}: {
-  attachment: Attachment;
-  source: LoadedChatSource | null;
-  onOpenImagePreview: (preview: { dataUrl: string; alt: string; caption: string }) => void;
-}) {
-  const [preview, setPreview] = useState<AttachmentPreview | null>(attachment.preview ?? null);
-  const [previewState, setPreviewState] = useState<"idle" | "loading" | "unavailable">("idle");
-  const renderKind = attachmentRenderKind(attachment, preview);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadPreview() {
-      if (attachment.preview) {
-        setPreview(attachment.preview);
-        setPreviewState("idle");
-        return;
-      }
-
-      if (!source || !isDesktopRuntime() || !canRequestAttachmentPreview(attachment)) {
-        setPreview(null);
-        setPreviewState("unavailable");
-        return;
-      }
-
-      setPreviewState("loading");
-      try {
-        const nextPreview = await attachmentPreviewLoader.load(source, attachment);
-        if (!cancelled) {
-          setPreview(nextPreview);
-          setPreviewState(nextPreview ? "idle" : "unavailable");
-        }
-      } catch {
-        if (!cancelled) {
-          setPreviewState("unavailable");
-        }
-      }
-    }
-
-    loadPreview();
-    return () => {
-      cancelled = true;
-    };
-  }, [attachment, source]);
-
-  if (preview && renderKind === "image") {
-    return (
-      <figure className="attachment-preview" data-testid={TEST_IDS.mediaBlock}>
-        <button
-          className="attachment-image-button"
-          type="button"
-          onClick={(event) => {
-            // Safari does not focus buttons on pointer activation. Keep a return target for the dialog.
-            event.currentTarget.focus({ preventScroll: true });
-            onOpenImagePreview({
-              dataUrl: preview.dataUrl,
-              alt: attachment.filename,
-              caption: attachment.filename,
-            });
-          }}
-          aria-label={`Open ${attachment.filename}`}
-        >
-          <img src={preview.dataUrl} alt={attachment.filename} />
-        </button>
-        <figcaption>{attachment.filename}</figcaption>
-      </figure>
-    );
-  }
-
-  if (preview && renderKind === "audio") {
-    return (
-      <figure className="attachment-player" data-testid={TEST_IDS.mediaBlock}>
-        <audio controls src={preview.dataUrl} preload="metadata" />
-        <figcaption>{attachment.filename}</figcaption>
-      </figure>
-    );
-  }
-
-  if (preview && renderKind === "video") {
-    return (
-      <figure className="attachment-video" data-testid={TEST_IDS.mediaBlock}>
-        <video controls src={preview.dataUrl} preload="metadata" />
-        <figcaption>{attachment.filename}</figcaption>
-      </figure>
-    );
-  }
-
-  if (preview && renderKind === "document") {
-    return (
-      <a
-        className="attachment-document"
-        href={preview.dataUrl}
-        download={attachment.filename}
-        data-testid={TEST_IDS.mediaBlock}
-      >
-        <File />
-        <span>{attachment.filename}</span>
-      </a>
-    );
-  }
-
-  return (
-    <div className="attachment-chip" data-testid={TEST_IDS.mediaBlock}>
-      <span>{previewState === "loading" ? "Loading media" : attachmentLabel(attachment.kind)}</span>
     </div>
   );
 }

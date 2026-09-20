@@ -1086,20 +1086,25 @@ button {
 }
 
 .virtual-message-list {
+  position: relative;
   width: 100%;
 }
 
-.virtual-message-spacer {
+.virtual-message-item {
+  position: absolute;
+  top: 0;
+  left: 0;
   width: 100%;
-  pointer-events: none;
+  padding: 2px 0;
+}
+
+.message-canvas {
+  overflow-anchor: none;
 }
 
 .message-row {
   display: flex;
   width: 100%;
-  margin: 4px 0;
-  content-visibility: auto;
-  contain-intrinsic-size: 0 72px;
 }
 
 .message-row.incoming {
