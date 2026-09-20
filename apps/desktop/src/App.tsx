@@ -40,6 +40,7 @@ import {
   listIphoneBackupChats,
   listIphoneBackups,
   openLocalChatSource,
+  type OpenLocalChatSourceResult,
   searchIphoneBackupChat,
   searchIphoneBackupChats,
 } from "./services/desktop";
@@ -89,6 +90,9 @@ const EMPTY_BACKUP_CHAT_LIST_SEARCH_STATUS: BackupChatListSearchStatus = {
 const BACKUP_SEARCH_DEBOUNCE_MS = 180;
 
 export function App() {
+  const chatLoadRequests = useRef(createLatestRequestGate());
+  const chatExportRequests = useRef(createLatestRequestGate());
+  const [isOpeningSource, setIsOpeningSource] = useState(false);
   const backupSelectionRequests = useRef(createLatestRequestGate());
   const backupScanRequests = useRef(createLatestRequestGate());
   const [source, setSource] = useState<LoadedChatSource | null>(null);
@@ -122,6 +126,8 @@ export function App() {
   const demoMode = useMemo(() => new URLSearchParams(window.location.search).get("demo"), []);
 
   useEffect(() => () => {
+    chatLoadRequests.current.invalidate();
+    chatExportRequests.current.invalidate();
     backupSelectionRequests.current.invalidate();
     backupScanRequests.current.invalidate();
   }, []);
@@ -449,12 +455,40 @@ export function App() {
     ? `backup-search:${source?.handle ?? ""}:${source?.chatId ?? ""}:${normalizedQuery}:${visibleMessages.length}`
     : `import:${source?.handle ?? ""}:${source?.chatId ?? ""}:${imported?.messages.length ?? 0}`;
 
-  async function openSource() {
+  function resetConversationView() {
+    setQuery("");
+    setSelectedDate("");
+    setMessageLimit(INITIAL_MESSAGE_LIMIT);
+    setBackupMessageSearch(EMPTY_BACKUP_MESSAGE_SEARCH);
+    setBackupChatSearch(EMPTY_BACKUP_CHAT_SEARCH);
+    chatExportRequests.current.invalidate();
+    setExportState({ status: "idle", message: null });
+  }
+
+  function changeSource() {
+    chatLoadRequests.current.invalidate();
+    setSource(null);
+    setImported(null);
+    setOpeningBackupChatId(null);
     setErrorMessage(null);
+    setLoadState("idle");
+    resetConversationView();
+  }
+
+  async function loadChat(
+    load: () => Promise<OpenLocalChatSourceResult | null>,
+    openingChatId: string | null = null,
+  ) {
+    const isCurrentRequest = chatLoadRequests.current.begin();
+    chatExportRequests.current.invalidate();
+    setExportState({ status: "idle", message: null });
+    setErrorMessage(null);
+    setOpeningBackupChatId(openingChatId);
     setLoadState("loading");
 
     try {
-      const result = await openLocalChatSource();
+      const result = await load();
+      if (!isCurrentRequest()) return;
       if (!result) {
         setLoadState(imported ? "ready" : "idle");
         return;
@@ -462,21 +496,31 @@ export function App() {
 
       setSource(result.source);
       setImported(result.imported);
-      resetBackupSelection();
-      setQuery("");
-      setSelectedDate("");
-      setMessageLimit(INITIAL_MESSAGE_LIMIT);
-      setBackupMessageSearch(EMPTY_BACKUP_MESSAGE_SEARCH);
-      setBackupChatSearch(EMPTY_BACKUP_CHAT_SEARCH);
-      setExportState({ status: "idle", message: null });
+      if (result.source.kind === "whatsapp_export_zip") resetBackupSelection();
+      resetConversationView();
       setLoadState("ready");
     } catch (error) {
+      if (!isCurrentRequest()) return;
       setErrorMessage(error instanceof Error ? error.message : String(error));
       setLoadState("error");
+    } finally {
+      if (isCurrentRequest()) setOpeningBackupChatId(null);
+    }
+  }
+
+  async function openSource() {
+    // Keep a single native picker/import in flight even if the user changes views.
+    if (isOpeningSource) return;
+    setIsOpeningSource(true);
+    try {
+      await loadChat(openLocalChatSource);
+    } finally {
+      setIsOpeningSource(false);
     }
   }
 
   async function refreshBackups() {
+    changeSource();
     const isCurrentRequest = backupScanRequests.current.begin();
     setBackupScanError(null);
     setBackupScanState("loading");
@@ -501,6 +545,7 @@ export function App() {
   }
 
   async function chooseBackupFolder() {
+    changeSource();
     const isCurrentRequest = backupScanRequests.current.begin();
     setBackupScanError(null);
     setBackupScanState("loading");
@@ -551,6 +596,7 @@ export function App() {
   }
 
   async function selectBackup(backup: IphoneBackupCandidate) {
+    changeSource();
     const isCurrentRequest = backupSelectionRequests.current.begin();
     const readiness = backupReadiness(backup);
     setSelectedBackup(backup);
@@ -597,33 +643,11 @@ export function App() {
   }
 
   async function openBackupChat(backup: IphoneBackupCandidate, chat: Chat) {
-    setErrorMessage(null);
-    setOpeningBackupChatId(chat.id);
-    setLoadState("loading");
-
-    try {
-      const result = demoMode === "backups" || demoMode === "backup-chat"
-        ? {
-            source: createLoadedBackupSource(backup, chat.id),
-            imported: createDemoBackupImport(chat),
-          }
-        : await importIphoneBackupChat(backup, chat.id);
-
-      setSource(result.source);
-      setImported(result.imported);
-      setQuery("");
-      setSelectedDate("");
-      setMessageLimit(INITIAL_MESSAGE_LIMIT);
-      setBackupMessageSearch(EMPTY_BACKUP_MESSAGE_SEARCH);
-      setBackupChatSearch(EMPTY_BACKUP_CHAT_SEARCH);
-      setExportState({ status: "idle", message: null });
-      setLoadState("ready");
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
-      setLoadState("error");
-    } finally {
-      setOpeningBackupChatId(null);
-    }
+    await loadChat(async () => (
+      demoMode === "backups" || demoMode === "backup-chat"
+        ? { source: createLoadedBackupSource(backup, chat.id), imported: createDemoBackupImport(chat) }
+        : importIphoneBackupChat(backup, chat.id)
+    ), chat.id);
   }
 
   async function exportCurrentChat() {
@@ -643,6 +667,7 @@ export function App() {
       return;
     }
 
+    const isCurrentRequest = chatExportRequests.current.begin();
     setExportState({ status: "exporting", message: "Preparing HTML export..." });
 
     try {
@@ -651,6 +676,7 @@ export function App() {
         createExportFilename(chatSummary.title),
         chatSummary.title,
       );
+      if (!isCurrentRequest()) return;
       if (!result) {
         setExportState({ status: "idle", message: null });
         return;
@@ -670,6 +696,7 @@ export function App() {
         message: `${result.embeddedAttachmentCount.toLocaleString()} media files embedded${skippedNote}${messageWindowNote}`,
       });
     } catch (error) {
+      if (!isCurrentRequest()) return;
       setExportState({
         status: "error",
         message: error instanceof Error ? error.message : String(error),
@@ -695,11 +722,15 @@ export function App() {
         onQueryChange={setQuery}
         onOpenBackupChat={openBackupChat}
         onOpenSource={openSource}
+        onChangeSource={changeSource}
+        isOpeningSource={isOpeningSource}
       />
       <section className="conversation-shell">
         {imported && chatSummary ? (
           <ConversationView
             imported={imported}
+            loadError={errorMessage}
+            isLoading={loadState === "loading"}
             source={source}
             title={chatSummary.title}
             query={query}
@@ -717,7 +748,7 @@ export function App() {
           />
         ) : (
           <EmptyConversation
-            loadState={loadState}
+            isOpeningSource={isOpeningSource}
             backupCandidates={backupCandidates}
             backupChats={backupChats}
             backupChatListWindow={backupChatListWindow}

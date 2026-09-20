@@ -146,6 +146,11 @@ state cannot resolve to a different local source and registry memory stays bound
 Backup scans receive a generation before their background work starts. Only the latest generation
 may replace registered handles. React uses the shared latest-request gate for scan and selection
 responses, including errors and selection resets, so older results cannot replace newer choices.
+Chat imports share one latest-request gate across ZIP and backup sources. A new choice or return
+to the source picker invalidates pending imports and export notifications. The shared chat-loading
+path owns success, error, cancellation, and loading cleanup; errors preserve the current conversation
+and remain visible. Only one ZIP picker/import can be in flight, preventing an older ZIP registration
+from retiring the newer source handle.
 
 Tauri path boundary rules:
 

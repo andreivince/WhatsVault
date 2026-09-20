@@ -43,6 +43,8 @@ import { ImagePreviewModal } from "./ImagePreviewModal";
 
 export function ConversationView({
   imported,
+  loadError,
+  isLoading,
   source,
   title,
   query,
@@ -59,6 +61,8 @@ export function ConversationView({
   timelineIdentity,
 }: {
   imported: ChatImport;
+  loadError: string | null;
+  isLoading: boolean;
   source: LoadedChatSource | null;
   title: string;
   query: string;
@@ -148,7 +152,7 @@ export function ConversationView({
             className="icon-button"
             type="button"
             onClick={onExportHtml}
-            disabled={exportState.status === "exporting" || !canExportHtml}
+            disabled={isLoading || exportState.status === "exporting" || !canExportHtml}
             aria-label={canExportHtml ? "Export chat to HTML" : "HTML export is not available for this source"}
             data-testid={TEST_IDS.exportButton}
             title={canExportHtml ? "Export chat to HTML" : "HTML export is not available for this source"}
@@ -183,6 +187,8 @@ export function ConversationView({
           <strong className={`banner-state ${exportState.status}`}>{bannerLabel}</strong>
         </div>
       </div>
+      {loadError ? <div className="scope-notice error" role="alert">{loadError}</div> : null}
+      {isLoading ? <div className="scope-notice loading" role="status">Opening conversation...</div> : null}
       <div className="message-canvas" ref={messageCanvasRef} data-testid={TEST_IDS.messageCanvas}>
         <div className="sync-pill">{profile.viewingLabel}</div>
         {exportState.message ? (

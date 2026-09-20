@@ -25,6 +25,8 @@ it("selects only the active chat when two chats share a title", () => {
     onOpenBackupChat={() => {}}
     onQueryChange={() => {}}
     onOpenSource={() => {}}
+    onChangeSource={() => {}}
+    isOpeningSource={false}
   />);
   expect(markup.match(/class="chat-row selected"/g)).toHaveLength(1);
   expect(markup.match(/aria-current="true"/g)).toHaveLength(1);

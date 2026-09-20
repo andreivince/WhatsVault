@@ -14,12 +14,11 @@ import type {
   BackupChatListWindow,
   BackupChatState,
   BackupScanState,
-  LoadState,
 } from "../viewState";
 import { Avatar } from "./Avatar";
 
 export function EmptyConversation({
-  loadState,
+  isOpeningSource,
   backupCandidates,
   backupChats,
   backupChatListWindow,
@@ -36,7 +35,7 @@ export function EmptyConversation({
   onRefreshBackups,
   onSelectBackup,
 }: {
-  loadState: LoadState;
+  isOpeningSource: boolean;
   backupCandidates: IphoneBackupCandidate[];
   backupChats: Chat[];
   backupChatListWindow: BackupChatListWindow;
@@ -59,8 +58,8 @@ export function EmptyConversation({
     <div className="empty-conversation" data-tauri-drag-region="">
       <h2>WhatsVault</h2>
       <p>Local WhatsApp viewer</p>
-      <SourceOverview loadState={loadState} onOpenSource={onOpenSource} />
-      {errorMessage ? <p className="error-text">{errorMessage}</p> : null}
+      <SourceOverview isOpeningSource={isOpeningSource} onOpenSource={onOpenSource} />
+      {errorMessage ? <p className="error-text" role="alert">{errorMessage}</p> : null}
       {isBrowserPreview ? <p className="muted-note">Desktop runtime required for file access.</p> : null}
       <div className="encryption-note">
         <span>
@@ -87,10 +86,10 @@ export function EmptyConversation({
 }
 
 function SourceOverview({
-  loadState,
+  isOpeningSource,
   onOpenSource,
 }: {
-  loadState: LoadState;
+  isOpeningSource: boolean;
   onOpenSource: () => void;
 }) {
   const exportProfile = sourceProfile("whatsapp_export_zip");
@@ -109,9 +108,9 @@ function SourceOverview({
           </span>
         </header>
         <p>{exportProfile.availabilityDetail}</p>
-        <button className="primary-action source-action" type="button" onClick={onOpenSource}>
+        <button className="primary-action source-action" type="button" onClick={onOpenSource} disabled={isOpeningSource}>
           <Upload />
-          <span>{loadState === "loading" ? exportProfile.loadingLabel : exportProfile.openActionLabel}</span>
+          <span>{isOpeningSource ? exportProfile.loadingLabel : exportProfile.openActionLabel}</span>
         </button>
       </article>
       <article

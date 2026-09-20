@@ -29,6 +29,8 @@ export function ChatSidebar({
   onOpenBackupChat,
   onQueryChange,
   onOpenSource,
+  onChangeSource,
+  isOpeningSource,
 }: {
   activeBackupChatId: string | null;
   backupChatState: BackupChatState;
@@ -44,6 +46,8 @@ export function ChatSidebar({
   onOpenBackupChat: (backup: IphoneBackupCandidate, chat: Chat) => void;
   onQueryChange: (value: string) => void;
   onOpenSource: () => void;
+  onChangeSource: () => void;
+  isOpeningSource: boolean;
 }) {
   const profile = sourceProfile(DEFAULT_SOURCE_KIND);
   const selectedBackupForChats = selectedBackup && backupChatState === "ready" ? selectedBackup : null;
@@ -88,6 +92,11 @@ export function ChatSidebar({
     <aside className="chat-sidebar">
       <header className="sidebar-header" data-tauri-drag-region="">
         <h1>Chats</h1>
+        {chatSummary || loadState === "loading" ? (
+          <button className="secondary-action compact" type="button" onClick={onChangeSource}>
+            Change source
+          </button>
+        ) : null}
       </header>
       <label className="search-box">
         <input
@@ -103,10 +112,11 @@ export function ChatSidebar({
           className="import-strip"
           type="button"
           onClick={onOpenSource}
+          disabled={isOpeningSource}
           data-testid={TEST_IDS.openSourceButton}
         >
           <FileArchive />
-          <span>{loadState === "loading" ? profile.loadingLabel : profile.openActionLabel}</span>
+          <span>{isOpeningSource ? profile.loadingLabel : profile.openActionLabel}</span>
         </button>
       ) : null}
       <div className="chat-list">
