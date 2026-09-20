@@ -43,7 +43,7 @@ Both platforms build in CI. Live Windows validation is still pending. See [suppo
 - **Media:** missing, oversized, or unsupported attachments appear as placeholders. HTML exports list attachments that could not be embedded.
 - **Installation:** platform signing, macOS notarization, and clean-machine installation checks are still needed before a stable release.
 
-See the [roadmap](ROADMAP.md) for planned work.
+See the [roadmap](ROADMAP.md) for planned work and the [changelog](CHANGELOG.md) for release history.
 
 ## Development
 
