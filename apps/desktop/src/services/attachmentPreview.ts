@@ -5,9 +5,16 @@ import type {
 } from "../models";
 
 import { readLocalAttachmentPreview } from "./desktop";
+import { loadedChatSourceIdentity } from "../domain/source";
 
 const DEFAULT_ATTACHMENT_PREVIEW_CONCURRENCY = 4;
 const DEFAULT_ATTACHMENT_PREVIEW_CACHE_ENTRIES = 256;
+const DEFAULT_ATTACHMENT_PREVIEW_CACHE_BYTES = 64 * 1024 * 1024;
+
+interface CacheEntry {
+  request: Promise<AttachmentPreview | null>;
+  bytes: number;
+}
 
 type PreviewReader = (
   source: LoadedChatSource,
@@ -17,6 +24,7 @@ type PreviewReader = (
 export interface AttachmentPreviewLoaderOptions {
   concurrency?: number;
   maxCacheEntries?: number;
+  maxCacheBytes?: number;
   readPreview?: PreviewReader;
 }
 
@@ -37,7 +45,9 @@ export function createAttachmentPreviewLoader(
     options.maxCacheEntries ?? DEFAULT_ATTACHMENT_PREVIEW_CACHE_ENTRIES,
   );
   const readPreview = options.readPreview ?? readLocalAttachmentPreview;
-  const cache = new Map<string, Promise<AttachmentPreview | null>>();
+  const maxCacheBytes = Math.max(0, options.maxCacheBytes ?? DEFAULT_ATTACHMENT_PREVIEW_CACHE_BYTES);
+  const cache = new Map<string, CacheEntry>();
+  let cachedBytes = 0;
   const pendingReads: Array<() => void> = [];
   let activeReads = 0;
 
@@ -61,19 +71,17 @@ export function createAttachmentPreviewLoader(
     }
   }
 
-  function remember(
-    cacheKey: string,
-    request: Promise<AttachmentPreview | null>,
-  ): Promise<AttachmentPreview | null> {
-    if (!cache.has(cacheKey) && cache.size >= maxCacheEntries) {
-      const oldestKey = cache.keys().next().value;
-      if (oldestKey) {
-        cache.delete(oldestKey);
-      }
-    }
+  function forget(cacheKey: string) {
+    cachedBytes -= cache.get(cacheKey)?.bytes ?? 0;
+    cache.delete(cacheKey);
+  }
 
-    cache.set(cacheKey, request);
-    return request;
+  function trim() {
+    while (cache.size > maxCacheEntries || cachedBytes > maxCacheBytes) {
+      const oldestKey = cache.keys().next().value;
+      if (oldestKey === undefined) break;
+      forget(oldestKey);
+    }
   }
 
   return {
@@ -81,20 +89,40 @@ export function createAttachmentPreviewLoader(
       const cacheKey = attachmentPreviewCacheKey(source, attachment);
       const cached = cache.get(cacheKey);
       if (cached) {
-        return cached;
+        cache.delete(cacheKey);
+        cache.set(cacheKey, cached);
+        return cached.request;
       }
 
-      const request = withReadSlot(() => readPreview(source, attachment)).catch((error) => {
-        if (cache.get(cacheKey) === request) {
-          cache.delete(cacheKey);
-        }
-        throw error;
-      });
+      const request = withReadSlot(() => readPreview(source, attachment))
+        .then((preview) => {
+          const entry = cache.get(cacheKey);
+          if (entry?.request === request) {
+            // Budget the retained URL, not the smaller decoded file size. Two bytes per
+            // UTF-16 code unit is conservative even when the engine stores ASCII compactly.
+            const bytes = (preview?.dataUrl.length ?? 0) * 2;
+            if (bytes > maxCacheBytes) {
+              forget(cacheKey);
+            } else {
+              entry.bytes = bytes;
+              cachedBytes += bytes;
+              trim();
+            }
+          }
+          return preview;
+        })
+        .catch((error) => {
+          if (cache.get(cacheKey)?.request === request) forget(cacheKey);
+          throw error;
+        });
 
-      return remember(cacheKey, request);
+      cache.set(cacheKey, { request, bytes: 0 });
+      trim();
+      return request;
     },
     clear() {
       cache.clear();
+      cachedBytes = 0;
     },
   };
 }
@@ -102,13 +130,11 @@ export function createAttachmentPreviewLoader(
 export const attachmentPreviewLoader = createAttachmentPreviewLoader();
 
 function attachmentPreviewCacheKey(source: LoadedChatSource, attachment: Attachment): string {
-  return [
-    source.kind,
-    source.handle,
-    source.chatId ?? "",
+  return JSON.stringify([
+    loadedChatSourceIdentity(source),
     attachment.id,
     attachment.archive_path,
     attachment.filename,
     attachment.kind,
-  ].join("\u001f");
+  ]);
 }

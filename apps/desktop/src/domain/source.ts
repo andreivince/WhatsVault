@@ -53,6 +53,11 @@ const SOURCE_PROFILES: Record<SourceKind, SourceProfile> = {
 
 export const DEFAULT_SOURCE_KIND: SourceKind = "whatsapp_export_zip";
 
+/** Identity shared by conversation state and source-scoped media caches. */
+export function loadedChatSourceIdentity(source: LoadedChatSource | null): string {
+  return JSON.stringify(source ? [source.kind, source.handle, source.chatId ?? null] : null);
+}
+
 export function sourceProfile(kind: SourceKind = DEFAULT_SOURCE_KIND): SourceProfile {
   return SOURCE_PROFILES[kind];
 }

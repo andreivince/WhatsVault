@@ -176,8 +176,10 @@ Media rendering rules:
 
 - The core crate detects attachment media types in `media`.
 - The desktop command returns a data URL only when the attachment fits the preview size cap and has a known media type.
+- `services/attachmentPreview.ts` shares preview requests, limits concurrent reads to four, and retains at most 256 entries and 64 MiB of estimated data URL string storage. Cache hits refresh recency; oversized results are displayed without being cached. These are cache bounds, separate from media retained by visible components or browser decoders.
 - The React UI chooses a presentation kind from the returned media type: image/sticker preview, audio player, video player, document link, or file placeholder.
 - Image previews can open in an in-app modal; oversized or unsupported media remains visible as a labeled placeholder instead of failing the chat view.
+- Conversation state is keyed by the shared loaded-source identity (source kind, opaque handle, and chat ID). Changing chats unmounts old media and dialogs even when an importer reuses attachment or message IDs. The preview cache uses that same identity.
 
 ## Core Crate
 

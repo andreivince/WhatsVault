@@ -24,6 +24,7 @@ import {
   backupReadiness,
   createDemoChatSource,
   createLoadedBackupSource,
+  loadedChatSourceIdentity,
   sourceProfile,
 } from "./domain/source";
 import type {
@@ -728,6 +729,7 @@ export function App() {
       <section className="conversation-shell">
         {imported && chatSummary ? (
           <ConversationView
+            key={loadedChatSourceIdentity(source)}
             imported={imported}
             loadError={errorMessage}
             isLoading={loadState === "loading"}
