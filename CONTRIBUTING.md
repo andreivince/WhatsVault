@@ -20,14 +20,16 @@ Use synthetic fixtures and redacted counts. If a bug requires private data to re
 
 ## Development Setup
 
-Install desktop dependencies:
+Install Node.js 24, Rust stable, and the [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/). From a cloned repository, install desktop dependencies:
 
 ```sh
 cd apps/desktop
-npm install
+npm ci
 ```
 
-Run the main checks:
+Run the desktop app with `npm run tauri dev` from `apps/desktop`. For a browser preview, use `npm run dev` and open `http://127.0.0.1:1420/?demo=backup-chat`; native file access requires the desktop app.
+
+Run the main checks from the repository root (install Chromium once with `npx playwright install chromium` from `apps/desktop`):
 
 ```sh
 cargo fmt --all -- --check
@@ -69,7 +71,17 @@ cd apps/desktop
 npm run demo:video
 ```
 
-Generated demo output is ignored under `apps/desktop/target/readme-demo/`.
+Generated demo output is ignored under `apps/desktop/target/readme-demo/`. See [the demo workflow](docs/demo-video.md) for screenshot capture, video prerequisites, and updating the committed assets.
+
+Keep the README focused on what the app does, how to use it, and current limitations. Put implementation details, test evidence, and media production instructions in the relevant documentation. When a visible workflow changes, review the README screenshot and video in the same pull request.
+
+## Further Reading
+
+- [Architecture and module boundaries](docs/architecture.md)
+- [Supported sources](docs/supported-sources.md)
+- [Local backup validation](docs/proof-evidence.md)
+- [CI, packaging, signing, and releases](docs/ci-release.md)
+- [Roadmap](ROADMAP.md) and [changelog](CHANGELOG.md)
 
 ## Pull Requests
 

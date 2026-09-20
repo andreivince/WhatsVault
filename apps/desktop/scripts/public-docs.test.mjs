@@ -15,10 +15,10 @@ describe("public repository docs", () => {
     const readme = await readRepoFile("README.md");
     const contributing = await readRepoFile("CONTRIBUTING.md");
 
-    expect(readme).toContain("[CONTRIBUTING.md](CONTRIBUTING.md)");
-    expect(readme).toContain("[SECURITY.md](SECURITY.md)");
-    expect(readme).toContain("[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)");
-    expect(readme).toContain("[CHANGELOG.md](CHANGELOG.md)");
+    const linkTargets = [...readme.matchAll(/\]\(([^)]+)\)/g)].map((match) => match[1]);
+    for (const target of ["CONTRIBUTING.md", "SECURITY.md", "CODE_OF_CONDUCT.md", "CHANGELOG.md"]) {
+      expect(linkTargets).toContain(target);
+    }
     expect(contributing).toContain("[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)");
   });
 
@@ -59,7 +59,8 @@ describe("public repository docs", () => {
     const readme = await readRepoFile("README.md");
 
     expect(contributing).toContain("signing and notarization");
-    expect(readme).toContain("macOS notarized signing and Windows code signing");
+    expect(readme).toMatch(/macOS[^.\n]*not[^.\n]*signed[^.\n]*notarized/i);
+    expect(readme).toMatch(/Windows[^.\n]*not[^.\n]*code signed/i);
     expect(contributing).not.toContain("real-backup proof, packaged render smoke, or signing remain incomplete");
   });
 });

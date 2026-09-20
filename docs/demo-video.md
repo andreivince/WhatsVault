@@ -34,6 +34,18 @@ The current committed public demo asset is:
 
 To refresh it, run `npm run demo:video`, inspect the generated MP4, then copy the approved synthetic output from `apps/desktop/target/readme-demo/rendered/whatsvault-readme-demo.mp4` to the committed asset path above. Update `docs/assets/demo-assets-manifest.json` with the new SHA-256 hash only after confirming the asset uses synthetic data.
 
+## Publish the inline player
+
+GitHub does not render a playable video on the repository MP4 file page. The README uses a GitHub video attachment for its inline player and keeps the committed MP4 as a download fallback.
+
+After inspecting the generated video, attach it to the demo-update pull request with a current GitHub CLI:
+
+```sh
+gh pr edit <pr-number> --attach docs/assets/whatsvault-readme-demo.mp4
+```
+
+Copy the resulting `https://github.com/user-attachments/assets/...` URL into the README on its own line. Verify that the README renders a player and that playback starts. Update the committed MP4, its manifest hash, and the attachment URL together so the two video copies stay consistent. See [GitHub attachment documentation](https://docs.github.com/en/github-cli/github-cli/attaching-files-with-github-cli).
+
 ## README Screenshot
 
 The committed README screenshot lives at `docs/assets/whatsvault-synthetic-demo.png` and must be generated from the synthetic `/?demo=backup-chat` route.
