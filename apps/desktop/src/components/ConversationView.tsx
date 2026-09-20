@@ -177,7 +177,7 @@ export function ConversationView({
         ) : null}
         {importWindowNotice && backupSearchStatus.status === "idle" ? (
           <div className="scope-notice">
-            {importWindowNotice}. Search and export use the loaded recent messages.
+            {importWindowNotice}. {profile.loadedWindowDetail}
           </div>
         ) : null}
         {dateRangeLabel ? <div className="day-pill">{dateRangeLabel}</div> : null}
