@@ -28,18 +28,18 @@
     "@tanstack/react-virtual": "^3.14.13",
     "@tauri-apps/api": "^2.0.0",
     "lucide-react": "^0.577.0",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
-    "@playwright/test": "^1.62.1",
-    "@tauri-apps/cli": "^2.11.4",
-    "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.4",
+    "@playwright/test": "^1.63.0",
+    "@tauri-apps/cli": "^2.11.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^5.0.0",
     "playwright": "^1.62.1",
-    "playwright-recast": "^0.19.2",
+    "playwright-recast": "^0.21.0",
     "typescript": "^5.9.0",
     "vite": "^7.3.6",
     "vitest": "^4.1.11"
