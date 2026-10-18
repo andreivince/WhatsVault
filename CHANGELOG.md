@@ -6,10 +6,24 @@ WhatsVault is pre-alpha. Until the first stable release, entries should stay hon
 
 ## Unreleased
 
+## 0.2.0 - 2026-10-16
+
+Unsigned pre-release. macOS builds are ad-hoc signed only and are not notarized; Windows builds are not code signed.
+
 - Corrected branding, responsive layouts, keyboard focus, and text contrast; refreshed the README with a playable demo and current screenshot.
 - Kept chat selection, loading errors, and export status consistent during overlapping requests; added a way to return to source selection from an open conversation.
 - Bounded media preview cache memory, reset previews when changing chats, and measured variable-height message rows to keep large timelines stable.
 - Improved ZIP transcript selection, attachment filenames, and message-header parsing; bounded imported text and repeated warnings for large or malformed archives.
+- Virtualized chat timeline rendering so long conversations stay responsive.
+- Moved blocking desktop work off the UI thread, hardened source handle lifecycle, fixed attachment preview cache clearing, and kept the latest backup selection and scan results.
+- Centralized and enforced HTML export media size budgets.
+- Added GitHub artifact attestations for release downloads.
+- Updated Rust and desktop dependencies.
+
+## 0.1.0 - 2026-06-26
+
+First unsigned pre-release.
+
 - Public GitHub repository foundation with README, roadmap, architecture docs, contribution guide, security policy, issue templates, pull request template, and release documentation.
 - Tauri v2 desktop app with React and TypeScript plus a Rust core crate for source-neutral import, media preview, search, and HTML export behavior.
 - WhatsApp export ZIP viewer using bounded latest-message import, on-demand bounded media preview, and self-contained HTML export.
