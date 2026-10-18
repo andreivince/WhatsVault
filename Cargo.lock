@@ -4063,7 +4063,7 @@ dependencies = [
 
 [[package]]
 name = "whatsvault-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "plist",
@@ -4076,7 +4076,7 @@ dependencies = [
 
 [[package]]
 name = "whatsvault-desktop"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "rusqlite",
@@ -4092,7 +4092,7 @@ dependencies = [
 
 [[package]]
 name = "whatsvault-proof"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "rusqlite",
  "tempfile",
